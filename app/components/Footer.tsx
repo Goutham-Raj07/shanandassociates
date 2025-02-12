@@ -32,7 +32,7 @@ export function Footer() {
               </li>
               <li>
                 <Link href="/contact" className="text-sm text-gray-600 hover:text-blue-600">
-                  Contact
+                  Contact Us
                 </Link>
               </li>
             </ul>
@@ -41,13 +41,13 @@ export function Footer() {
             <h3 className="text-lg font-semibold mb-4">Legal</h3>
             <ul className="space-y-2">
               <li>
-                <Link href="/privacy-policy" className="text-sm text-gray-600 hover:text-blue-600">
-                  Privacy Policy
+                <Link href="/terms" className="hover:text-blue-400">
+                  Terms & Conditions
                 </Link>
               </li>
               <li>
-                <Link href="/terms-of-service" className="text-sm text-gray-600 hover:text-blue-600">
-                  Terms of Service
+                <Link href="/privacy" className="hover:text-blue-400">
+                  Privacy Policy
                 </Link>
               </li>
             </ul>
