@@ -8,8 +8,8 @@ export default function Terms() {
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar userType="guest" orgName="Shan & Associates" />
-      <main className="flex-grow container mx-auto px-4 py-8">
-        <h1 className="text-3xl font-bold mb-6">Terms & Conditions</h1>
+      <main className="flex-grow container mx-auto px-4 py-16">
+        <h1 className="text-3xl font-bold mb-8">Terms & Conditions</h1>
         <div className="bg-white rounded-lg shadow-md p-6">
           <div className="space-y-6">
             {/* Last Updated Section */}
