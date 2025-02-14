@@ -23,12 +23,19 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Plus, Send, Download, MessageCircle, MessageSquare, ChevronRight, ChevronLeft, FileText, IndianRupee } from "lucide-react"
+import { Plus, Send, Download, MessageCircle, MessageSquare, ChevronRight, ChevronLeft, FileText, IndianRupee, MapPin, Search, X } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { apiRequest } from '@/lib/api-helpers'
 import { useRouter } from 'next/navigation'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
+import { RequestDocumentDialog } from "../components/RequestDocumentDialog"
 
 // Add these type definitions at the top
 type MessageWizardStep = 1 | 2 | 3
@@ -103,13 +110,15 @@ interface Job {
 }
 
 type JobRequest = {
+  client: any
+  service_type: string
   id: number
   title: string
   type: string
   description: string
   deadline: string
   budget?: string
-  status: 'Pending' | 'Approved' | 'Rejected'
+  status: 'Pending' | 'Approved' | 'Rejected' | 'Declined'
   clientName: string
   createdAt: string
 }
@@ -124,6 +133,11 @@ type Client = {
   status: 'Active' | 'Pending'
   total_jobs: number
   pending_payments: number
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  state?: string
+  pincode?: string
 }
 
 // Add these type definitions for the event handlers
@@ -197,6 +211,32 @@ interface SupabaseResponse<T> {
 interface ApiResponse {
   success: boolean
   error?: string
+}
+
+// Add this type at the top with other types
+type MessageTemplate = {
+  id: string
+  title: string
+  content: string
+}
+
+// Update the MessageHistory type
+type MessageHistory = {
+  id: number
+  content: string
+  recipients: number
+  recipient_details: Array<{
+    id: string
+    name: string
+    email?: string
+    mobile?: string
+    channels: string[]
+    status: 'success' | 'failed'
+  }>
+  channels: string[]
+  sent_at: string
+  status: 'success' | 'partial' | 'failed'
+  sender_id: string
 }
 
 export default function AdminDashboard() {
@@ -292,7 +332,7 @@ export default function AdminDashboard() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [previewOpen, setPreviewOpen] = useState(false)
 
-  const [clientSearchQuery, setClientSearchQuery] = useState('')
+  const [clientSearch, setClientSearch] = useState("")
 
   // Add this near your other state declarations
   const JOB_TYPES = [
@@ -307,7 +347,7 @@ export default function AdminDashboard() {
   ]
 
   // First, add the search state for job titles
-  const [jobTitleSearch, setJobTitleSearch] = useState('')
+  const [jobSearch, setJobSearch] = useState('')
 
   // First, add the search state for job requests
   const [jobRequestSearch, setJobRequestSearch] = useState('')
@@ -332,7 +372,7 @@ export default function AdminDashboard() {
   const [isSending, setIsSending] = useState(false)
 
   // First add this state at the top with other states
-  const [showMessageSection, setShowMessageSection] = useState(false)
+  const [showMessageSection, setShowMessageSection] = useState(true)  // Changed to true
 
   // Add gateway status check
   const [gatewayStatus, setGatewayStatus] = useState(false)
@@ -342,6 +382,45 @@ export default function AdminDashboard() {
 
   // Add this state for tracking loading states per document
   const [documentLoadingStates, setDocumentLoadingStates] = useState<DocumentLoadingState>({})
+
+  // Add this state near the top with other states
+  const [requestDialogOpen, setRequestDialogOpen] = useState(false)
+
+  // Add this state
+  const [showRequestDialog, setShowRequestDialog] = useState(false)
+
+  // Add this state
+  const [messageHistory, setMessageHistory] = useState<MessageHistory[]>([])
+
+  // Add this state for expanded message
+  const [expandedMessageId, setExpandedMessageId] = useState<number | null>(null)
+
+  // Add these states at the top
+  const [showAllMessages, setShowAllMessages] = useState(false)
+  const [messageSearchQuery, setMessageSearchQuery] = useState('')
+
+  // Add these states for pagination
+  const [jobRequestsPage, setJobRequestsPage] = useState(0)
+  const [documentsPage, setDocumentsPage] = useState(0)
+  const [messagesPage, setMessagesPage] = useState(0)
+
+  // Add this state for expanded message in history
+  const [expandedHistoryMessage, setExpandedHistoryMessage] = useState<number | null>(null)
+
+  // Add this function to filter messages
+  const filteredMessages = useMemo(() => {
+    const query = messageSearchQuery.toLowerCase()
+    return messageHistory.filter(message => 
+      // Search in message content
+      message.content.toLowerCase().includes(query) ||
+      // Search in recipient details
+      message.recipient_details.some(recipient => 
+        recipient.name.toLowerCase().includes(query) ||
+        (recipient.email?.toLowerCase() || '').includes(query) ||
+        (recipient.mobile?.toLowerCase() || '').includes(query)
+      )
+    )
+  }, [messageHistory, messageSearchQuery])
 
   // Create a wrapper function for button clicks
   const handleButtonClick = async (buttonId: string, action: () => Promise<void>) => {
@@ -363,6 +442,7 @@ export default function AdminDashboard() {
       const loadData = async () => {
         try {
           await loadAdminData()
+          await fetchMessageHistory()  // Add this line
           return setupRealtimeSubscriptions()
         } catch (error) {
           console.error('Error loading data:', error)
@@ -472,17 +552,32 @@ export default function AdminDashboard() {
     }
   }
 
-  const loadAdminData = async (): Promise<void> => {
+  const loadAdminData = async () => {
     try {
       setIsLoading(true)
       
+      // Fetch job requests
+      const { data: jobRequestsData, error: jobRequestsError } = await supabase
+        .from('job_requests')
+        .select(`
+          *,
+          client:client_id (
+            id,
+            full_name,
+            email
+          )
+        `)
+        .order('created_at', { ascending: false })
+
+      if (jobRequestsError) throw jobRequestsError
+      setJobRequests(jobRequestsData || [])
+
       // Load all data in parallel with additional calculations
       const [
         { data: clientsData, error: clientsError },
         { data: jobsData, error: jobsError },
         { data: paymentsData, error: paymentsError },
         { data: documentsData, error: documentsError },
-        { data: jobRequestsData, error: jobRequestsError }
       ] = await Promise.all([
         // Load clients
         supabase
@@ -516,17 +611,18 @@ export default function AdminDashboard() {
         // Load documents
         supabase
           .from('documents')
-          .select('*')
+          .select(`
+            *,
+            client:client_id (
+              id,
+              full_name,
+              email
+            )
+          `)
           .order('created_at', { ascending: false }),
-        
-        // Load job requests
-        supabase
-          .from('job_requests')
-          .select('*')
-          .order('created_at', { ascending: false })
       ])
 
-      if (clientsError || jobsError || paymentsError || documentsError || jobRequestsError) 
+      if (clientsError || jobsError || paymentsError || documentsError) 
         throw new Error('Error fetching data')
 
       // Process clients with total jobs, pending payments and status
@@ -572,17 +668,6 @@ export default function AdminDashboard() {
         feedback: doc.feedback,
         file_name: doc.file_name,
         client: doc.client
-      })) || [])
-      setJobRequests(jobRequestsData?.map(request => ({
-        id: request.id,
-        title: request.title,
-        type: request.type,
-        description: request.description,
-        deadline: request.deadline,
-        budget: request.budget,
-        status: request.status,
-        clientName: request.client?.full_name || 'Unknown Client',
-        createdAt: request.created_at
       })) || [])
       
     } catch (error) {
@@ -851,9 +936,19 @@ export default function AdminDashboard() {
 
   // Update the filteredJobs function
   const filteredJobs = jobs.filter(job => {
-    const matchesTitle = (job.title || '').toLowerCase().includes(jobTitleSearch.toLowerCase())
-    const matchesFilter = filterStatus === 'all' || job.status === filterStatus
-    return matchesTitle && matchesFilter
+    const searchTerm = jobSearch.toLowerCase().trim()
+    if (!searchTerm) return true // Show all jobs when search is empty
+    
+    // Search across multiple fields
+    const jobId = job.id.toString()
+    const jobTitle = (job.title || '').toLowerCase()
+    const clientName = (job.client?.full_name || '').toLowerCase()
+    const clientEmail = (job.client?.email || '').toLowerCase()
+    
+    return jobId.includes(searchTerm) ||
+           jobTitle.includes(searchTerm) ||
+           clientName.includes(searchTerm) ||
+           clientEmail.includes(searchTerm)
   }).sort((a, b) => {
     const dateA = new Date(a.deadline).getTime()
     const dateB = new Date(b.deadline).getTime()
@@ -1109,8 +1204,22 @@ export default function AdminDashboard() {
     }))
   }
 
-  // Don't render anything until we're initialized
-  if (!isInitialized || loading) {
+  // Add this search filter function near other state declarations
+  const filteredDocuments = documents.filter(document => {
+    const searchTerm = searchQuery.toLowerCase().trim()
+    if (!searchTerm) return true // Show all documents when search is empty
+    
+    const documentName = (document.name || '').toLowerCase()
+    const clientName = (document.client?.full_name || '').toLowerCase()
+    const clientEmail = (document.client?.email || '').toLowerCase()
+    
+    return documentName.includes(searchTerm) ||
+           clientName.includes(searchTerm) ||
+           clientEmail.includes(searchTerm)
+  })
+
+  // Show loading state
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin" />
@@ -1118,45 +1227,15 @@ export default function AdminDashboard() {
     )
   }
 
-  if (hasError) {
-    return (
-      <div className="flex flex-col min-h-screen">
-        <Navbar userType="admin" userName={user?.full_name} orgName="Shan Association" />
-        <main className="flex-grow flex items-center justify-center">
-          <div className="text-center space-y-4">
-            <h2 className="text-2xl font-bold text-red-600">Something went wrong</h2>
-            <p className="text-gray-600">Please try refreshing the page</p>
-            <Button onClick={() => window.location.reload()}>
-              Refresh Page
-            </Button>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    )
-  }
-
+  // Redirect if not authenticated or wrong user type
   if (!user || user.user_type !== 'admin') {
-    return (
-      <div className="flex flex-col min-h-screen">
-        <Navbar userType="guest" orgName="Shan Association" />
-        <main className="flex-grow flex items-center justify-center">
-          <div className="text-center space-y-4">
-            <h2 className="text-2xl font-bold text-red-600">Unauthorized Access</h2>
-            <p className="text-gray-600">Please sign in with an admin account</p>
-            <Button onClick={() => router.push('/')}>
-              Go to Homepage
-            </Button>
-          </div>
-        </main>
-        <Footer />
-      </div>
-    )
+    router.replace('/')
+    return null
   }
 
   const DashboardHeader = () => (
     <div className="mb-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
         <div className="space-y-1">
           <h2 className="text-2xl font-bold">Dashboard Overview</h2>
           <div className="flex items-center space-x-2 text-sm">
@@ -1164,12 +1243,12 @@ export default function AdminDashboard() {
             <span className="font-semibold">{user?.full_name || 'Admin'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
           <Select
             value={filterStatus}
             onValueChange={(value) => setFilterStatus(value)}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full sm:w-40">
               <SelectValue placeholder="Filter status" />
             </SelectTrigger>
             <SelectContent>
@@ -1181,6 +1260,7 @@ export default function AdminDashboard() {
           <Button
             variant="outline"
             onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+            className="w-full sm:w-auto"
           >
             Sort {sortOrder === 'asc' ? '↑' : '↓'}
           </Button>
@@ -1189,6 +1269,155 @@ export default function AdminDashboard() {
     </div>
   )
 
+  // Update the search filter function to be more robust
+  const filteredClients = clients.filter(client => {
+    const searchTerm = clientSearch.toLowerCase().trim()
+    if (!searchTerm) return true // Show all clients when search is empty
+    
+    const fullName = (client.full_name || '').toLowerCase()
+    const email = (client.email || '').toLowerCase()
+    
+    return fullName.includes(searchTerm) || email.includes(searchTerm)
+  })
+
+  // Add these templates in the component before the return statement
+  const messageTemplates: MessageTemplate[] = [
+    {
+      id: 'payment-reminder',
+      title: 'Payment Reminder',
+      content: 'Dear client, this is a reminder that your payment of ₹{amount} for {service} is pending. Please complete the payment at your earliest convenience.\n\nRegards,\nSaravanan\nShan & Associates\nRedhills, Chennai\nContact: +91-9962698999'
+    },
+    {
+      id: 'document-request',
+      title: 'Document Request',
+      content: 'Dear client, please submit the required document ({document_name}) by {deadline}. This is important for proceeding with your service.\n\nBest regards,\nSaravanan\nShan & Associates\nRedhills, Chennai\nContact: +91-9962698999'
+    },
+    {
+      id: 'service-update',
+      title: 'Service Update',
+      content: 'Dear client, we have updated your {service_name}. Current progress is at {progress}%. Please review and let us know if you have any questions.\n\nBest regards,\nSaravanan\nShan & Associates\nRedhills, Chennai\nContact: +91-9962698999'
+    },
+    {
+      id: 'welcome',
+      title: 'Welcome Message',
+      content: 'Dear client, welcome to Shan & Associates! We are delighted to have you as our client. For any queries, please feel free to contact us.\n\nBest regards,\nSaravanan\nShan & Associates\nRedhills, Chennai\nContact: +91-9962698999'
+    },
+    {
+      id: 'completion',
+      title: 'Service Completion',
+      content: 'Dear client, we are pleased to inform you that your {service_name} has been completed. Please review and provide your feedback.\n\nThank you for choosing Shan & Associates.\n\nBest regards,\nSaravanan\nShan & Associates\nRedhills, Chennai\nContact: +91-9962698999'
+    }
+  ]
+
+  // Add this function near other data loading functions
+  const fetchMessageHistory = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('message_history')
+        .select('*')
+        .order('sent_at', { ascending: false })
+        .limit(50)  // Limit to last 50 messages
+
+      if (error) throw error
+
+      if (data) {
+        setMessageHistory(data)
+      }
+    } catch (error) {
+      console.error('Error fetching message history:', error)
+      toast.error('Failed to load message history')
+    }
+  }
+
+  // Update the handleSendMessage function's success block
+  const handleSendMessage = async () => {
+    if (isSending) return
+    
+    setIsSending(true)
+    try {
+      if (selectedClients.length === 0) {
+        toast.error('Please select at least one client')
+        return
+      }
+      if (selectedChannels.length === 0) {
+        toast.error('Please select at least one channel')
+        return
+      }
+      if (!messageContent.trim()) {
+        toast.error('Please enter a message')
+        return
+      }
+
+      const recipientDetails = selectedClients.map(clientId => {
+        const client = clients.find(c => c.id === clientId)
+        return {
+          id: clientId,
+          name: client?.full_name || 'Unknown',
+          email: client?.email,
+          mobile: client?.mobile,
+          channels: selectedChannels,
+          status: 'success'
+        }
+      })
+
+      // Insert into message_history table
+      const { data: messageData, error: messageError } = await supabase
+        .from('message_history')
+        .insert({
+          content: messageContent,
+          recipients: selectedClients.length,
+          recipient_details: recipientDetails,
+          channels: selectedChannels,
+          status: 'success',
+          sender_id: user!.id
+        })
+        .select()
+        .single()
+
+      if (messageError) throw messageError
+
+      for (const clientId of selectedClients) {
+        const client = clients.find(c => c.id === clientId)
+        if (!client) continue
+
+        for (const channel of selectedChannels) {
+          try {
+            if (channel === 'email' && client.email) {
+              await sendMessage('email', clientId, messageContent.trim())
+            }
+            if (channel === 'message' && client.mobile) {
+              await sendMessage('message', clientId, messageContent.trim())
+            }
+          } catch (error) {
+            console.error(`Error sending ${channel} to ${client.full_name}:`, error)
+            toast.error(`Failed to send ${channel} to ${client.full_name}`)
+          }
+        }
+      }
+      toast.success('Messages sent successfully')
+      setMessageContent('')
+      setSelectedClients([])
+      setSelectedChannels([])
+
+      // Update UI with new message
+      setMessageHistory(prev => [messageData, ...prev])
+
+      // After successful send, refresh the message history
+      await fetchMessageHistory()
+      
+      // Clear form
+      setMessageContent('')
+      setSelectedClients([])
+      setSelectedChannels([])
+
+    } catch (error) {
+      console.error('Error sending messages:', error)
+      toast.error('Failed to send messages')
+    } finally {
+      setIsSending(false)
+    }
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar 
@@ -1196,39 +1425,263 @@ export default function AdminDashboard() {
         userName={user?.full_name}
         orgName="Shan & Associates"
       />
-      <main className="flex-grow container mx-auto px-4 py-8">
+      <main className="flex-grow container mx-auto px-4 py-4 sm:py-8">
         <DashboardHeader />
+        
+        {/* Recent Updates Section */}
+        <div className="mb-8 grid gap-4 md:grid-cols-3">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Recent Job Requests</CardTitle>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (jobRequestsPage > 0) {
+                      setJobRequestsPage(prev => prev - 1)
+                    } else {
+                      setJobRequestsPage(Math.floor((jobRequests.length - 1) / 5))
+                    }
+                  }}
+                  disabled={jobRequests.length <= 5}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs text-gray-500 w-12 text-center">
+                  {Math.min(jobRequestsPage * 5 + 5, jobRequests.length)}/{jobRequests.length}
+                </span>
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (jobRequests.length > (jobRequestsPage + 1) * 5) {
+                      setJobRequestsPage(prev => prev + 1)
+                    } else {
+                      setJobRequestsPage(0)
+                    }
+                  }}
+                  disabled={jobRequests.length <= 5}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {jobRequests.slice(jobRequestsPage * 5, (jobRequestsPage + 1) * 5).map((request) => (
+                  <div key={request.id} className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium">{request.title || request.service_type}</p>
+                      <p className="text-xs text-gray-500">
+                        {request.client?.full_name} • {formatTimeAgo(request.createdAt)}
+                      </p>
+                    </div>
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      request.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                      request.status === 'Approved' ? 'bg-green-100 text-green-700' :
+                      request.status === 'Declined' ? 'bg-red-100 text-red-700' :
+                      'bg-gray-100 text-gray-700'
+                    }`}>
+                      {request.status || 'Pending'}
+                    </span>
+                  </div>
+                ))}
+                {jobRequests.length === 0 && (
+                  <p className="text-sm text-gray-500 text-center py-2">No recent requests</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Recent Documents</CardTitle>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (documentsPage > 0) {
+                      setDocumentsPage(prev => prev - 1)
+                    } else {
+                      setDocumentsPage(Math.floor((documents.length - 1) / 5))
+                    }
+                  }}
+                  disabled={documents.length <= 5}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs text-gray-500 w-12 text-center">
+                  {Math.min(documentsPage * 5 + 5, documents.length)}/{documents.length}
+                </span>
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (documents.length > (documentsPage + 1) * 5) {
+                      setDocumentsPage(prev => prev + 1)
+                    } else {
+                      setDocumentsPage(0)
+                    }
+                  }}
+                  disabled={documents.length <= 5}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {documents.slice(documentsPage * 5, (documentsPage + 1) * 5).map((doc) => (
+                  <div key={doc.id} className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium">{doc.name}</p>
+                      <p className="text-xs text-gray-500">{doc.clientName}</p>
+                    </div>
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      doc.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                      doc.status === 'Approved' ? 'bg-green-100 text-green-700' :
+                      'bg-red-100 text-red-700'
+                    }`}>
+                      {doc.status}
+                    </span>
+                  </div>
+                ))}
+                {documents.length === 0 && (
+                  <p className="text-sm text-gray-500 text-center py-2">No recent documents</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Recent Messages</CardTitle>
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (messagesPage > 0) {
+                      setMessagesPage(prev => prev - 1)
+                    } else {
+                      setMessagesPage(Math.floor((messageHistory.length - 1) / 5))
+                    }
+                  }}
+                  disabled={messageHistory.length <= 5}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs text-gray-500 w-12 text-center">
+                  {Math.min(messagesPage * 5 + 5, messageHistory.length)}/{messageHistory.length}
+                </span>
+                <Button 
+                  variant="ghost" 
+                  className="h-8 w-8 p-0"
+                  onClick={() => {
+                    if (messageHistory.length > (messagesPage + 1) * 5) {
+                      setMessagesPage(prev => prev + 1)
+                    } else {
+                      setMessagesPage(0)
+                    }
+                  }}
+                  disabled={messageHistory.length <= 5}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {messageHistory.slice(messagesPage * 5, (messagesPage + 1) * 5).map((message) => (
+                  <div key={message.id} className="flex items-center justify-between py-2">
+                    <div>
+                      <p className="text-sm font-medium line-clamp-1">{message.content}</p>
+                      <p className="text-xs text-gray-500">{message.recipients} recipient(s)</p>
+                    </div>
+                    <span className="text-xs text-gray-500">
+                      {formatTimeAgo(message.sent_at)}
+                    </span>
+                  </div>
+                ))}
+                {messageHistory.length === 0 && (
+                  <p className="text-sm text-gray-500 text-center py-2">No recent messages</p>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         <Tabs defaultValue="clients">
-          <TabsList className="flex justify-between items-center w-full border-b">
-            <div className="flex gap-4">
-              <TabsTrigger value="clients">Manage Clients</TabsTrigger>
-              <TabsTrigger value="jobs">Manage Jobs</TabsTrigger>
-              <TabsTrigger value="documents">Documents</TabsTrigger>
-              <TabsTrigger value="jobRequests">Job Requests</TabsTrigger>
-              <TabsTrigger value="messages">Messages</TabsTrigger>
+          <TabsList className="w-full border-b overflow-x-auto flex-nowrap">
+            <div className="container mx-auto flex justify-start gap-4 min-w-max px-4">
+              <TabsTrigger 
+                value="clients"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+              >
+                Manage Clients
+              </TabsTrigger>
+              <TabsTrigger 
+                value="jobs"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+              >
+                Manage Jobs
+              </TabsTrigger>
+              <TabsTrigger 
+                value="documents"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+              >
+                Documents
+              </TabsTrigger>
+              <TabsTrigger 
+                value="jobRequests"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+              >
+                Job Requests
+              </TabsTrigger>
+              <TabsTrigger 
+                value="messages"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+              >
+                Messages
+              </TabsTrigger>
             </div>
           </TabsList>
           <TabsContent value="clients">
             <Card>
               <CardHeader>
-                <CardTitle>Manage Clients</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center">
-                    <Input
-                      placeholder="Search clients..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-64"
-                    />
+                <div className="flex items-center justify-between">
+                  <CardTitle>Manage Clients</CardTitle>
+                  <div className="flex items-center gap-4">
+                    <div className="relative w-72">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                      <Input
+                        placeholder="Search by name or email..."
+                        value={clientSearch}
+                        onChange={(e) => setClientSearch(e.target.value)}
+                        className="pl-8 h-9"
+                      />
+                    </div>
+                    <Button 
+                      onClick={() => router.push('/admin-dashboard/add-user')}
+                      className="flex items-center gap-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Client
+                    </Button>
                   </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+                <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Client Name</TableHead>
                       <TableHead>Email</TableHead>
                       <TableHead>Mobile</TableHead>
+                        <TableHead>Address</TableHead>
                       <TableHead>Joined Date</TableHead>
                       <TableHead>Total Jobs</TableHead>
                       <TableHead>Pending Payments</TableHead>
@@ -1236,12 +1689,7 @@ export default function AdminDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                      {clients
-                        .filter(client => 
-                          ((client.full_name || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (client.email || '').toLowerCase().includes(searchQuery.toLowerCase()))
-                        )
-                        .map((client: Client) => (
+                        {filteredClients.map((client: Client) => (
                       <TableRow key={client.id}>
                             <TableCell>
                               <div className="flex items-center gap-2">
@@ -1255,6 +1703,30 @@ export default function AdminDashboard() {
                             </TableCell>
                         <TableCell>{client.email || 'No email'}</TableCell>
                             <TableCell>{client.mobile || 'No mobile'}</TableCell>
+                              <TableCell>
+                                {client.address_line1 ? (
+                                  <Dialog>
+                                    <DialogTrigger>
+                                      <MapPin className="h-4 w-4 text-gray-500 hover:text-blue-500 cursor-pointer" />
+                                    </DialogTrigger>
+                                    <DialogContent className="sm:max-w-[425px]">
+                                      <div className="space-y-2 pt-2">
+                                        <p>{client.address_line1}</p>
+                                        {client.address_line2 && <p>{client.address_line2}</p>}
+                                        {(client.city || client.state || client.pincode) && (
+                                          <p>
+                                            {[client.city, client.state, client.pincode]
+                                              .filter(Boolean)
+                                              .join(', ')}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </DialogContent>
+                                  </Dialog>
+                                ) : (
+                                  <MapPin className="h-4 w-4 text-gray-300" />
+                                )}
+                              </TableCell>
                         <TableCell>
                               <div className="flex flex-col">
                                 <span>{new Date(client.created_at).toLocaleDateString()}</span>
@@ -1288,19 +1760,19 @@ export default function AdminDashboard() {
           </TabsContent>
           <TabsContent value="jobs" className="py-4">
             <Card>
-              <CardHeader>
-                <div className="flex justify-between items-center">
+              <CardHeader className="p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
                   <CardTitle>Job List</CardTitle>
-                  <div className="flex items-center gap-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
                     <Input
-                      placeholder="Search job title..."
-                      value={jobTitleSearch}
-                      onChange={(e) => setJobTitleSearch(e.target.value)}
-                      className="w-[280px]"
+                      placeholder="Search by job ID, title, client name or email..."
+                      value={jobSearch}
+                      onChange={(e) => setJobSearch(e.target.value)}
+                      className="w-full sm:w-[320px]"
                     />
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button>
+                        <Button className="w-full sm:w-auto">
                           <Plus className="mr-2 h-4 w-4" /> New Job
                         </Button>
                       </DialogTrigger>
@@ -1310,29 +1782,76 @@ export default function AdminDashboard() {
                         </DialogHeader>
                         <form onSubmit={handleCreateJob}>
                           <div className="grid gap-4 py-4">
-                            <div className="grid grid-cols-4 items-center gap-4">
-                              <Label htmlFor="client" className="text-right">
-                                Client
-                              </Label>
-                              <div className="col-span-3">
-                                <Select
-                                  onValueChange={(value) => setSelectedClientId(value)}
-                                  required
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select client..." />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {clients.map((client) => (
-                                      <SelectItem key={client.id} value={client.id}>
-                                        <div className="flex flex-col">
-                                          <span>{client.full_name}</span>
-                                          <span className="text-xs text-gray-500">{client.email}</span>
+                            {/* Add this in the job creation dialog, before the client selection dropdown */}
+                            <div className="space-y-4">
+                              <Label>Select Client</Label>
+                              
+                              <div className="space-y-2">
+                                {selectedClientId ? (
+                                  <div className="flex items-center justify-between border rounded-lg p-3">
+                                    {clients
+                                      .filter(client => client.id === selectedClientId)
+                                      .map((client) => (
+                                        <div key={client.id} className="flex items-center justify-between w-full">
+                                          <div className="flex flex-col">
+                                            <span className="font-medium">{client.full_name || 'Unnamed Client'}</span>
+                                            <span className="text-xs text-gray-500">{client.email || 'No email'}</span>
+                                          </div>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setSelectedClientId('')
+                                              setClientSearch('')
+                                            }}
+                                          >
+                                            <X className="h-4 w-4" />
+                                          </Button>
                                         </div>
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="relative">
+                                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                                      <Input
+                                        placeholder="Search clients by name or email..."
+                                        value={clientSearch}
+                                        onChange={(e) => setClientSearch(e.target.value)}
+                                        className="pl-8"
+                                      />
+                                    </div>
+
+                                    {clientSearch && (
+                                      <div className="border rounded-lg divide-y">
+                                        {clients
+                                          .filter(client => {
+                                            const searchTerm = clientSearch.toLowerCase();
+                                            const fullName = (client.full_name || '').toLowerCase();
+                                            const email = (client.email || '').toLowerCase();
+                                            
+                                            return fullName.includes(searchTerm) || email.includes(searchTerm);
+                                          })
+                                          .slice(0, 3)
+                                          .map((client) => (
+                                            <div
+                                              key={client.id}
+                                              className="p-2 cursor-pointer hover:bg-gray-50"
+                                              onClick={() => {
+                                                setSelectedClientId(client.id)
+                                                setClientSearch('')
+                                              }}
+                                            >
+                                              <div className="flex flex-col">
+                                                <span className="font-medium">{client.full_name || 'Unnamed Client'}</span>
+                                                <span className="text-xs text-gray-500">{client.email || 'No email'}</span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             </div>
 
@@ -1401,10 +1920,12 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+                <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
+                        <TableHead>Job ID</TableHead>
                       <TableHead>Client</TableHead>
                       <TableHead>Job Title</TableHead>
                       <TableHead>Job Type</TableHead>
@@ -1420,7 +1941,13 @@ export default function AdminDashboard() {
                   <TableBody>
                     {filteredJobs.map((job) => (
                       <TableRow key={job.id}>
-                        <TableCell>{job.client?.full_name || 'Unknown Client'}</TableCell>
+                          <TableCell className="font-medium">#{job.id}</TableCell>
+                          <TableCell>
+                            <div>
+                              <div className="font-medium">{job.client?.full_name}</div>
+                              <div className="text-sm text-gray-500">{job.client?.email}</div>
+                            </div>
+                          </TableCell>
                         <TableCell>{job.title}</TableCell>
                         <TableCell>{job.type}</TableCell>
                         <TableCell>{job.status}</TableCell>
@@ -1501,104 +2028,34 @@ export default function AdminDashboard() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="documents">
             <Card>
-              <CardHeader>
-                <div className="flex justify-between items-center">
+              <CardHeader className="p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
                   <CardTitle>Documents</CardTitle>
-                  <div className="flex gap-4">
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
                     <Input
-                      placeholder="Search by client name or document..."
+                      placeholder="Search by document name, client name or email..."
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-[280px]"
+                      className="w-full sm:w-[280px]"
                     />
-                    <Dialog>
-                      <DialogTrigger asChild>
-                        <Button>
-                          <Plus className="mr-2 h-4 w-4" />
-                          Request Documents
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Request Documents</DialogTitle>
-                        </DialogHeader>
-                          <form onSubmit={handleRequestDocuments} className="space-y-4">
-                            <div className="space-y-4">
-                              <div className="space-y-2">
-                                <Label>Select Client</Label>
-                                <Select
-                                  value={selectedClientId}
-                                  onValueChange={setSelectedClientId}
-                                  required
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue placeholder="Select a client" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {clients.map((client) => (
-                                      <SelectItem key={client.id} value={client.id}>
-                                        {client.full_name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                          </div>
-
-                                <div className="space-y-2">
-                                  <Label htmlFor="name">Document Name</Label>
-                                  <Input 
-                                    id="name"
-                                    name="name"
-                                    placeholder="e.g., Bank Statement"
-                                    value={documentRequest.name}
-                                    onChange={handleInputChange}
-                                    required
-                                  />
-                            </div>
-
-                                <div className="space-y-2">
-                                  <Label htmlFor="description">Description</Label>
-                                  <Textarea 
-                                    id="description"
-                                    name="description"
-                                    placeholder="Provide details about the required document..."
-                                    value={documentRequest.description}
-                                    onChange={handleTextAreaChange}
-                                    required
-                                  />
-                            </div>
-
-                                <div className="space-y-2">
-                                  <Label htmlFor="deadline">Deadline</Label>
-                                  <Input 
-                                    id="deadline"
-                                    name="deadline"
-                                    type="date"
-                                    value={documentRequest.deadline}
-                                    onChange={handleInputChange}
-                                    min={new Date().toISOString().split('T')[0]}
-                                    required
-                                  />
-                                </div>
-                            </div>
-
-                            <div className="flex justify-end space-x-2">
-                              <Button type="submit">
-                                Request Document
-                              </Button>
-                            </div>
-                          </form>
-                        </DialogContent>
-                      </Dialog>
+                    <Button 
+                      onClick={() => setShowRequestDialog(true)}
+                      className="w-full sm:w-auto"
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      Request Document
+                    </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+                <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1610,422 +2067,504 @@ export default function AdminDashboard() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {documents
-                      .filter(doc => 
-                        (doc.clientName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        doc.name.toLowerCase().includes(searchQuery.toLowerCase())
-                      )
-                      .map((document) => (
-                        <TableRow key={document.id}>
-                          <TableCell>
-                            <div className="flex flex-col">
-                              <span>{document.client?.full_name || 'Unknown Client'}</span>
-                              <span className="text-sm text-gray-500">{document.client?.email}</span>
+                    {filteredDocuments.map((document) => (
+                      <TableRow key={document.id}>
+                        <TableCell>
+                          <div>
+                            <div className="font-medium">
+                              {document.client?.full_name || 'Unknown'}
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <FileText className="h-4 w-4 text-gray-500" />
-                              <span>{document.name}</span>
+                            <div className="text-sm text-gray-500">
+                              {document.client?.email || 'No email'}
                             </div>
-                          </TableCell>
-                          <TableCell>
-                            {document.uploadedAt ? (
-                              formatSimpleDate(document.uploadedAt)
-                            ) : (
-                              <span className="text-gray-500">Not uploaded</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-gray-500" />
+                            <span>{document.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          {document.uploadedAt ? (
+                            formatSimpleDate(document.uploadedAt)
+                          ) : (
+                            <span className="text-gray-500">Not uploaded</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded-full text-xs ${
+                            document.status === 'Verified' 
+                              ? 'bg-green-100 text-green-800'
+                              : document.status === 'Rejected'
+                              ? 'bg-red-100 text-red-800'
+                              : document.status === 'Uploaded'
+                              ? 'bg-blue-100 text-blue-800'
+                              : 'bg-yellow-100 text-yellow-800'
+                          }`}>
+                            {document.status}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex space-x-2">
+                            {document.status === 'Uploaded' && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-green-600 hover:text-green-700"
+                                  onClick={() => handleButtonClick('approve', () => handleDocumentAction(document, 'approve'))}
+                                >
+                                  {buttonStates['approve'] ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    'Approve'
+                                  )}
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="text-red-600 hover:text-red-700"
+                                  onClick={() => handleButtonClick('reject', () => handleDocumentAction(document, 'reject'))}
+                                >
+                                  {buttonStates['reject'] ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    'Reject'
+                                  )}
+                                </Button>
+                              </>
                             )}
-                          </TableCell>
-                          <TableCell>
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              document.status === 'Verified' 
-                                ? 'bg-green-100 text-green-800'
-                                : document.status === 'Rejected'
-                                ? 'bg-red-100 text-red-800'
-                                : document.status === 'Uploaded'
-                                ? 'bg-blue-100 text-blue-800'
-                                : 'bg-yellow-100 text-yellow-800'
-                            }`}>
-                              {document.status}
-                            </span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex space-x-2">
-                              {document.status === 'Uploaded' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handlePreviewDocument(document)}
+                              disabled={documentLoadingStates[document.id.toString()]?.action === 'preview'}
+                            >
+                              {documentLoadingStates[document.id.toString()]?.action === 'preview' ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
                                 <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-green-600 hover:text-green-700"
-                                    onClick={() => handleButtonClick('approve', () => handleDocumentAction(document, 'approve'))}
-                                  >
-                                    {buttonStates['approve'] ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      'Approve'
-                                    )}
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-red-600 hover:text-red-700"
-                                    onClick={() => handleButtonClick('reject', () => handleDocumentAction(document, 'reject'))}
-                                  >
-                                    {buttonStates['reject'] ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      'Reject'
-                                    )}
-                                  </Button>
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  Preview
                                 </>
                               )}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handlePreviewDocument(document)}
-                                disabled={documentLoadingStates[document.id.toString()]?.action === 'preview'}
-                              >
-                                {documentLoadingStates[document.id.toString()]?.action === 'preview' ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <FileText className="h-4 w-4 mr-2" />
-                                    Preview
-                                  </>
-                                )}
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleDownloadDocument(document)}
-                                disabled={documentLoadingStates[document.id.toString()]?.action === 'download'}
-                              >
-                                {documentLoadingStates[document.id.toString()]?.action === 'download' ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Download className="h-4 w-4 mr-2" />
-                                    Download
-                                  </>
-                                )}
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleDownloadDocument(document)}
+                              disabled={documentLoadingStates[document.id.toString()]?.action === 'download'}
+                            >
+                              {documentLoadingStates[document.id.toString()]?.action === 'download' ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <Download className="h-4 w-4 mr-2" />
+                                  Download
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    ))}
                   </TableBody>
                 </Table>
+                </div>
               </CardContent>
             </Card>
 
-            <Dialog open={feedbackDialogOpen} onOpenChange={setFeedbackDialogOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Provide Feedback</DialogTitle>
-                </DialogHeader>
-                <div className="space-y-4 py-4">
-                  <div className="space-y-2">
-                    <Label>Document</Label>
-                    <p className="text-sm text-gray-500">{selectedDocument?.name}</p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="feedback">Feedback</Label>
-                    <Textarea
-                      id="feedback"
-                      placeholder="Please provide feedback for rejection..."
-                      value={feedback}
-                      onChange={(e) => setFeedback(e.target.value)}
-                      className="min-h-[100px]"
-                      required
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end space-x-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setFeedbackDialogOpen(false)
-                      setFeedback("")
-                      setSelectedDocument(null)
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => {
-                      if (selectedDocument && feedback.trim()) {
-                        handleButtonClick('reject', () => handleDocumentAction(selectedDocument, 'reject'))
-                      }
-                    }}
-                    disabled={!feedback.trim() || buttonStates['reject']}
-                  >
-                    {buttonStates['reject'] ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      'Reject Document'
-                    )}
-                  </Button>
-                </div>
-              </DialogContent>
-            </Dialog>
+            <RequestDocumentDialog
+              open={showRequestDialog}
+              onOpenChange={setShowRequestDialog}
+              onSuccess={loadAdminData}
+              clients={clients}
+            />
           </TabsContent>
           <TabsContent value="jobRequests">
             <Card>
               <CardHeader>
-                <div className="flex justify-between items-center">
+                <div className="flex items-center justify-between">
                   <CardTitle>Job Requests</CardTitle>
-                  <div className="flex items-center gap-4">
+                  <div className="relative w-72">
+                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
                     <Input
-                      placeholder="Search job requests..."
+                      placeholder="Search requests..."
                       value={jobRequestSearch}
                       onChange={(e) => setJobRequestSearch(e.target.value)}
-                      className="w-[280px]"
+                      className="pl-8"
                     />
                   </div>
                 </div>
               </CardHeader>
               <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Client</TableHead>
-                      <TableHead>Title</TableHead>
-                      <TableHead>Type</TableHead>
-                      <TableHead>Deadline</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {jobRequests
-                      .filter(request => 
-                        request.title.toLowerCase().includes(jobRequestSearch.toLowerCase()) ||
-                        request.clientName.toLowerCase().includes(jobRequestSearch.toLowerCase())
-                      )
-                      .map((request) => (
-                        <TableRow key={request.id}>
-                          <TableCell>{request.clientName}</TableCell>
-                          <TableCell>{request.title}</TableCell>
-                          <TableCell>{request.type}</TableCell>
-                          <TableCell>{formatSimpleDate(request.deadline)}</TableCell>
-                          <TableCell>
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              request.status === 'Approved' 
-                                ? 'bg-green-100 text-green-800'
-                                : request.status === 'Rejected'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-yellow-100 text-yellow-800'
+                <div className="space-y-4">
+                  {jobRequests.map((request) => (
+                    <div key={request.id} className="border rounded-lg p-4">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-medium">{request.title || request.service_type}</h3>
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              request.status === 'Pending' ? 'bg-yellow-100 text-yellow-700' :
+                              request.status === 'Approved' ? 'bg-green-100 text-green-700' :
+                              'bg-red-100 text-red-700'
                             }`}>
                               {request.status}
                             </span>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              {request.status === 'Pending' && (
-                                <>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-green-600 hover:text-green-700"
-                                    onClick={() => handleButtonClick('approve', () => handleJobRequestAction(request.id, 'approve'))}
-                                  >
-                                    {buttonStates['approve'] ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      'Approve'
-                                    )}
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    className="text-red-600 hover:text-red-700"
-                                    onClick={() => handleButtonClick('reject', () => handleJobRequestAction(request.id, 'reject'))}
-                                  >
-                                    {buttonStates['reject'] ? (
-                                      <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                      'Reject'
-                                    )}
-                                  </Button>
-                                </>
-                              )}
+                          </div>
+                          <div className="space-y-1 text-sm text-gray-500">
+                            <p>
+                              <span className="font-medium">Client:</span> {request.client?.full_name}
+                            </p>
+                            <p>
+                              <span className="font-medium">Type:</span> {request.type}
+                            </p>
+                            {request.budget && (
+                              <p>
+                                <span className="font-medium">Budget:</span> ₹{request.budget}
+                              </p>
+                            )}
+                            <p>
+                              <span className="font-medium">Deadline:</span> {formatSimpleDate(request.deadline)}
+                            </p>
+                            <p className="text-sm mt-2">{request.description}</p>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <span className="text-xs text-gray-500">
+                            {formatTimeAgo(request.createdAt)}
+                          </span>
+                          {request.status === 'Pending' && (
+                            <div className="flex flex-col gap-2 mt-4">
+                              <Button
+                                size="sm"
+                                className="bg-green-600 hover:bg-green-700 text-white"
+                                onClick={() => handleButtonClick(`approve-${request.id}`, () => handleJobRequestAction(request.id, 'approve'))}
+                                disabled={buttonStates[`approve-${request.id}`]}
+                              >
+                                {buttonStates[`approve-${request.id}`] ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  'Approve'
+                                )}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="border-red-200 text-red-600 hover:bg-red-50"
+                                onClick={() => handleButtonClick(`reject-${request.id}`, () => handleJobRequestAction(request.id, 'reject'))}
+                                disabled={buttonStates[`reject-${request.id}`]}
+                              >
+                                {buttonStates[`reject-${request.id}`] ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  'Decline'
+                                )}
+                              </Button>
                             </div>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </Table>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {jobRequests.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      No job requests found
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="messages">
             <Card>
               <CardHeader>
-                <CardTitle>Send Messages</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Messages & Communications</CardTitle>
+                  <Button 
+                    onClick={() => setShowMessageSection(!showMessageSection)} // Changed to toggle
+                    className="flex items-center gap-2"
+                    variant={!showMessageSection ? "outline" : "default"}  // Inverted condition
+                  >
+                    {!showMessageSection ? (  // Inverted condition
+                      <>
+                        <MessageCircle className="h-4 w-4" />
+                        New Message
+                      </>
+                    ) : (
+                      <>
+                        <MessageCircle className="h-4 w-4" />
+                        View History
+                      </>
+                    )}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="space-y-6">
-                  {/* Recipients Selection */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between items-center mb-2">
-                      <Label>Select Recipients</Label>
-                      <div className="space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedClients(clients.map(client => client.id))}
-                        >
-                          Select All
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setSelectedClients([])}
-                        >
-                          Clear All
-                        </Button>
+                {showMessageSection ? (  // Removed the ! to show sending page when true
+                  <div className="space-y-6">
+                    {/* Client Selection */}
+                    <div className="space-y-4">
+                      <div className="flex justify-between items-center">
+                        <h3 className="text-lg font-semibold">Select Recipients</h3>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedClients(clients.map(c => c.id))}
+                          >
+                            Select All
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setSelectedClients([])}
+                          >
+                            Clear All
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Add client search bar */}
+                      <div className="relative">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                        <Input
+                          placeholder="Search clients by name or email..."
+                          value={clientSearch}
+                          onChange={(e) => setClientSearch(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[200px] overflow-y-auto border rounded-lg p-4">
+                        {clients
+                          .filter(client => {
+                            const searchTerm = clientSearch.toLowerCase();
+                            const fullName = (client.full_name || '').toLowerCase();
+                            const email = (client.email || '').toLowerCase();
+                            
+                            return fullName.includes(searchTerm) || email.includes(searchTerm);
+                          })
+                          .map((client) => (
+                            <div key={client.id} className="flex items-center space-x-2">
+                              <Checkbox
+                                checked={selectedClients.includes(client.id)}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    setSelectedClients(prev => [...prev, client.id])
+                                  } else {
+                                    setSelectedClients(prev => prev.filter(id => id !== client.id))
+                                  }
+                                }}
+                              />
+                              <div>
+                                <p className="text-sm font-medium">{client.full_name || 'Unnamed Client'}</p>
+                                <p className="text-xs text-gray-500">{client.email || 'No email'}</p>
+                              </div>
+                            </div>
+                        ))}
                       </div>
                     </div>
-                    <div className="max-h-[200px] overflow-y-auto space-y-2 border rounded-md p-4">
-                      {clients.map((client) => (
-                        <div key={client.id} className="flex items-center space-x-2">
+
+                    {/* Channel Selection */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Select Channels</h3>
+                      <div className="flex gap-6">
+                        <div className="flex items-center space-x-2">
                           <Checkbox
-                            checked={selectedClients.includes(client.id)}
+                            checked={selectedChannels.includes('email')}
                             onCheckedChange={(checked) => {
                               if (checked) {
-                                setSelectedClients(prev => [...prev, client.id])
+                                setSelectedChannels(prev => [...prev, 'email'])
                               } else {
-                                setSelectedClients(prev => prev.filter(id => id !== client.id))
+                                setSelectedChannels(prev => prev.filter(c => c !== 'email'))
                               }
                             }}
                           />
-                          <Label>{client.full_name}</Label>
+                          <div>
+                            <Label>Email</Label>
+                            <p className="text-xs text-green-600">Available</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Checkbox
+                            checked={selectedChannels.includes('message')}
+                            onCheckedChange={(checked) => {
+                              if (checked) {
+                                setSelectedChannels(prev => [...prev, 'message'])
+                              } else {
+                                setSelectedChannels(prev => prev.filter(c => c !== 'message'))
+                              }
+                            }}
+                          />
+                          <div>
+                            <Label>SMS</Label>
+                            <p className={`text-xs ${gatewayStatus ? 'text-green-600' : 'text-red-600'}`}>
+                              {gatewayStatus ? 'Available' : 'Gateway Offline'}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Message Content */}
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold">Compose Message</h3>
+                      <div className="space-y-4">
+                        <Select
+                          onValueChange={(value) => {
+                            const template = messageTemplates.find(t => t.id === value)
+                            if (template) {
+                              setMessageContent(template.content)
+                            }
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a template or write custom message" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="custom">Custom Message</SelectItem>
+                            {messageTemplates.map((template) => (
+                              <SelectItem key={template.id} value={template.id}>
+                                {template.title}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        
+                        <Textarea
+                          value={messageContent}
+                          onChange={(e) => setMessageContent(e.target.value)}
+                          placeholder="Type your message here..."
+                          className="min-h-[200px]"
+                          disabled={isSending}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Action Buttons */}
+                    <div className="flex justify-between items-center pt-4 border-t">
+                      <Button 
+                        variant="outline" 
+                        onClick={() => setShowMessageSection(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <div className="flex items-center gap-4">
+                        <p className="text-sm text-gray-500">
+                          {selectedClients.length} recipient{selectedClients.length !== 1 ? 's' : ''} selected
+                        </p>
+                        <Button
+                          onClick={handleSendMessage}
+                          disabled={isSending || selectedClients.length === 0}
+                        >
+                          {isSending ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Sending...
+                            </>
+                          ) : (
+                            <>
+                              <Send className="mr-2 h-4 w-4" />
+                              Send Message
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  // Message History Section
+                  <div className="space-y-6">
+                    {/* Message History Search */}
+                    <div className="flex justify-between items-center">
+                      <h3 className="text-lg font-semibold">Message History</h3>
+                      <div className="relative w-72">
+                        <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                        <Input
+                          placeholder="Search messages..."
+                          value={messageSearchQuery}
+                          onChange={(e) => setMessageSearchQuery(e.target.value)}
+                          className="pl-8"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Message History List */}
+                    <div className="space-y-4">
+                      {filteredMessages.map((message) => (
+                        <div 
+                          key={message.id} 
+                          className="border rounded-lg p-4 space-y-4 cursor-pointer hover:bg-gray-50"
+                          onClick={() => setExpandedHistoryMessage(expandedHistoryMessage === message.id ? null : message.id)}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="space-y-2">
+                              <p className="font-medium">{message.content}</p>
+                              <div className="flex items-center gap-2 text-sm text-gray-500">
+                                <span>{message.recipients} recipient(s)</span>
+                                <span>•</span>
+                                <span>{message.channels.join(', ')}</span>
+                                <span>•</span>
+                                <span>{formatTimeAgo(message.sent_at)}</span>
+                              </div>
+                            </div>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                              message.status === 'success' ? 'bg-green-100 text-green-700' :
+                              message.status === 'partial' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {message.status}
+                            </span>
+                          </div>
+
+                          {/* Recipient Details Section */}
+                          {expandedHistoryMessage === message.id && (
+                            <div className="mt-4 pt-4 border-t">
+                              <h4 className="text-sm font-medium mb-3">Recipients</h4>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                {message.recipient_details.map((recipient) => (
+                                  <div 
+                                    key={recipient.id} 
+                                    className="bg-gray-50 p-3 rounded-lg"
+                                  >
+                                    <div className="flex justify-between items-start">
+                                      <div className="space-y-1">
+                                        <p className="text-sm font-medium">{recipient.name}</p>
+                                        {recipient.email && (
+                                          <p className="text-xs text-gray-500">
+                                            Email: {recipient.email}
+                                          </p>
+                                        )}
+                                        {recipient.mobile && (
+                                          <p className="text-xs text-gray-500">
+                                            Mobile: {recipient.mobile}
+                                          </p>
+                                        )}
+                                        <p className="text-xs text-gray-500">
+                                          Sent via: {recipient.channels?.join(', ') || 'No channels'}
+                                        </p>
+                                      </div>
+                                      <span className={`text-xs px-2 py-1 rounded-full ${
+                                        recipient.status === 'success' 
+                                          ? 'bg-green-100 text-green-700' 
+                                          : 'bg-red-100 text-red-700'
+                                      }`}>
+                                        {recipient.status}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
                   </div>
-
-                  {/* Channel Selection */}
-                  <div className="space-y-2">
-                    <Label>Select Channels</Label>
-                    <div className="space-y-2">
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          checked={selectedChannels.includes('email')}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedChannels(prev => [...prev, 'email'])
-                            } else {
-                              setSelectedChannels(prev => prev.filter(c => c !== 'email'))
-                            }
-                          }}
-                        />
-                        <Label>Email</Label>
-                        <span className="text-xs text-green-600 ml-2">(Available)</span>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Checkbox
-                          checked={selectedChannels.includes('message')}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setSelectedChannels(prev => [...prev, 'message'])
-                            } else {
-                              setSelectedChannels(prev => prev.filter(c => c !== 'message'))
-                            }
-                          }}
-                        />
-                        <Label>SMS</Label>
-                        <span className={`text-xs ml-2 ${gatewayStatus ? 'text-green-600' : 'text-red-600'}`}>
-                          ({gatewayStatus ? 'Available' : 'Gateway Offline'})
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Message Content */}
-                  <div className="space-y-2">
-                    <Label>Message Content</Label>
-                    <Textarea
-                      value={messageContent}
-                      onChange={(e) => setMessageContent(e.target.value)}
-                      placeholder="Type your message here..."
-                      className="min-h-[150px]"
-                      disabled={isSending}
-                    />
-                  </div>
-
-                  {/* Send Button */}
-                  <div className="flex items-center justify-between">
-                    <div className="text-sm text-gray-500">
-                      {selectedClients.length > 0 && (
-                        <span>{selectedClients.length} recipient{selectedClients.length !== 1 ? 's' : ''} selected</span>
-                      )}
-                    </div>
-                    <Button
-                      onClick={async () => {
-                        if (isSending) return // Prevent double clicks
-                        
-                        setIsSending(true)
-                        try {
-                          if (selectedClients.length === 0) {
-                            toast.error('Please select at least one client')
-                            return
-                          }
-                          if (selectedChannels.length === 0) {
-                            toast.error('Please select at least one channel')
-                            return
-                          }
-                          if (!messageContent.trim()) {
-                            toast.error('Please enter a message')
-                            return
-                          }
-
-                          for (const clientId of selectedClients) {
-                            const client = clients.find(c => c.id === clientId)
-                            if (!client) continue
-
-                            for (const channel of selectedChannels) {
-                              try {
-                                if (channel === 'email' && client.email) {
-                                  await sendMessage('email', clientId, messageContent.trim())
-                                }
-                                if (channel === 'message' && client.mobile) {
-                                  await sendMessage('message', clientId, messageContent.trim())
-                                }
-                              } catch (error) {
-                                console.error(`Error sending ${channel} to ${client.full_name}:`, error)
-                                toast.error(`Failed to send ${channel} to ${client.full_name}`)
-                              }
-                            }
-                          }
-                          toast.success('Messages sent successfully')
-                          setMessageContent('')
-                          setSelectedClients([])
-                          setSelectedChannels([])
-                        } catch (error) {
-                          console.error('Error sending messages:', error)
-                          toast.error('Failed to send messages')
-                        } finally {
-                          setIsSending(false)
-                        }
-                      }}
-                      disabled={isSending}
-                    >
-                      {isSending ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Sending...
-                        </>
-                      ) : (
-                        <>
-                          <Send className="mr-2 h-4 w-4" />
-                          Send Messages
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

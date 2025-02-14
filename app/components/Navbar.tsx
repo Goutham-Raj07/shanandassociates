@@ -9,7 +9,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, User, Settings, Loader2 } from "lucide-react"
+import { ChevronDown, LogOut, User, Settings, Loader2, IndianRupee } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { AuthDialog } from "./AuthDialog"
 import { useAuth } from "@/contexts/AuthContext"
@@ -50,6 +50,19 @@ export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' 
       setIsLoading(false) // Only reset loading on error
     }
   }
+
+  const menuItems = [
+    {
+      label: "Profile Settings",
+      href: "/profile",
+      icon: Settings
+    },
+    {
+      label: "Payment Confirmations",
+      href: "/admin-dashboard/payments",
+      icon: IndianRupee
+    }
+  ]
 
   return (
     <nav className="bg-white border-b">
@@ -116,10 +129,18 @@ export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' 
                       Dashboard
                     </Link>
                   </DropdownMenuItem>
+                  {userType === 'admin' && (
+                    <DropdownMenuItem>
+                      <Link href="/admin-dashboard/payments" className="flex items-center w-full">
+                        <IndianRupee className="mr-2 h-4 w-4" />
+                        Payment Requests
+                      </Link>
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem>
-                    <Link href="/settings" className="flex items-center w-full">
+                    <Link href="/profile" className="flex items-center w-full">
                       <Settings className="mr-2 h-4 w-4" />
-                      Settings
+                      Profile
                     </Link>
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleSignOut}>

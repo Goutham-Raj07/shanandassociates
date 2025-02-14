@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bell, Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send } from "lucide-react"
+import { Bell, Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send, X } from "lucide-react"
 import { PaymentDialog } from "../components/PaymentDialog"
 import { JobRequestDialog, JobRequest } from "../components/JobRequestDialog"
 import { generateInvoicePDF } from "../components/Invoice"
@@ -19,6 +19,11 @@ import { storageApi } from "@/lib/api"
 import { supabase } from "@/lib/supabase"
 import { toast } from "sonner"
 import { Loader2 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { PaymentOptionsDialog } from "../components/PaymentOptionsDialog"
+
+// Add these type definitions at the top
+type PaymentMethod = 'card' | 'upi' | 'netbanking'
 
 type JobMessage = {
   id: number
@@ -46,15 +51,21 @@ type Job = {
 
 type Payment = {
   id: number
-  date: string
   amount: number
   description: string
-  status: 'Paid' | 'Pending'
+  status: 'Paid' | 'Pending' | 'Waiting for Confirmation'
+  payment_method?: string | null
+  paid_at?: string | null
+  payment_details?: {
+    upiId?: string
+    name?: string
+    accountNumber?: string
+  } | null
+  rejection_reason?: string | null
+  date?: string
+  created_at: string
   paymentMethod?: string
   paidAt?: string
-  payment_method?: string
-  paid_at?: string
-  created_at?: string
 }
 
 type Notification = {
@@ -136,11 +147,9 @@ declare global {
   }
 }
 
-// Add type definition
-type PaymentMethod = 'card' | 'upi' | 'netbanking';
-
 export default function ClientDashboard() {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
+  const router = useRouter()
   const [accountStatus, setAccountStatus] = useState("Active")
   const [uploadProgress, setUploadProgress] = useState(0)
   const [jobs, setJobs] = useState<Job[]>([])
@@ -151,7 +160,7 @@ export default function ClientDashboard() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
 
   const [paymentDialogOpen, setPaymentDialogOpen] = useState(false)
-  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null)
+  const [selectedPayment, setSelectedPayment] = useState<number | null>(null)
 
   const [jobRequestDialogOpen, setJobRequestDialogOpen] = useState(false)
 
@@ -171,6 +180,8 @@ export default function ClientDashboard() {
 
   // Add this state at the top with other states
   const [buttonStates, setButtonStates] = useState<{[key: string]: boolean}>({});
+
+  const [showPaymentOptions, setShowPaymentOptions] = useState(false)
 
   useEffect(() => {
     if (user?.id) {
@@ -198,6 +209,12 @@ export default function ClientDashboard() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
+
+  useEffect(() => {
+    if (!loading && (!user || user.user_type !== 'client')) {
+      router.replace('/')
+    }
+  }, [user, loading])
 
   const setupRealtimeSubscriptions = () => {
     // Subscribe to payments updates
@@ -690,97 +707,15 @@ export default function ClientDashboard() {
   };
 
   // Update the handlePayment function
-  const handlePayment = async (paymentId: number) => {
-    const payment = payments.find(p => p.id === paymentId);
-    if (!payment || !user) return;
+  const handlePayment = (paymentId: number) => {
+    setSelectedPayment(paymentId)
+    setShowPaymentOptions(true)
+  }
 
-    try {
-      setIsLoading(true);
-      
-      // Create Razorpay order
-      const orderResponse = await fetch('/api/create-payment', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          amount: payment.amount,
-          payment_id: paymentId,
-        }),
-      });
-
-      if (!orderResponse.ok) throw new Error('Failed to create order');
-      const orderData = await orderResponse.json();
-
-      // Initialize Razorpay
-      const options = {
-        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
-        amount: orderData.amount,
-        currency: orderData.currency,
-        name: 'Shan & Associates',
-        description: payment.description,
-        order_id: orderData.orderId,
-        prefill: {
-          name: user.full_name,
-          email: user.email,
-        },
-        handler: async function (response: any) {
-          try {
-            // Update payment status
-            const { error } = await supabase
-              .from('payments')
-              .update({
-                status: 'Paid',
-                payment_method: 'Razorpay',
-                paid_at: new Date().toISOString(),
-                razorpay_payment_id: response.razorpay_payment_id,
-                razorpay_order_id: response.razorpay_order_id,
-                razorpay_signature: response.razorpay_signature,
-              })
-              .eq('id', paymentId);
-
-            if (error) throw error;
-
-            // Update local state instead of refreshing
-            setPayments(prevPayments => 
-              prevPayments.map(p => 
-                p.id === paymentId 
-                  ? { 
-                      ...p, 
-                      status: 'Paid', 
-                      payment_method: 'Razorpay',
-                      paid_at: new Date().toISOString() 
-                    }
-                  : p
-              )
-            );
-
-            setPaymentDialogOpen(false);
-            toast.success('Payment successful!');
-          } catch (error) {
-            console.error('Error updating payment:', error);
-            toast.error('Payment completed but failed to update status');
-          } finally {
-            setIsLoading(false);
-          }
-        },
-        modal: {
-          ondismiss: function() {
-            setIsLoading(false);
-            toast.error('Payment cancelled');
-          },
-        },
-        theme: {
-          color: '#2563eb',
-        },
-      };
-
-      const razorpay = new window.Razorpay(options);
-      razorpay.open();
-    } catch (error) {
-      console.error('Payment error:', error);
-      toast.error('Failed to initialize payment');
-      setIsLoading(false);
-    }
-  };
+  const handlePaymentOption = (option: 'qr' | 'bank' | 'upi') => {
+    // No need to do anything here as the payment status update is handled in PaymentOptionsDialog
+    console.log('Payment option selected:', option)
+  }
 
   // Add this to handle loading state better
   useEffect(() => {
@@ -998,14 +933,16 @@ export default function ClientDashboard() {
 
       if (data) {
         // Transform the data to match your Payment type
-        const transformedPayments = data.map(payment => ({
-          id: payment.id,
-          date: payment.created_at,
+        const transformedPayments = data.map((payment: any) => ({
+          ...payment,
+          created_at: payment.date || payment.created_at || new Date().toISOString(),
+          date: payment.date,
           amount: payment.amount,
           description: payment.description,
           status: payment.status,
           paymentMethod: payment.payment_method,
-          paidAt: payment.paid_at
+          paidAt: payment.paid_at,
+          rejection_reason: payment.rejection_reason
         }));
 
         setPayments(transformedPayments);
@@ -1023,7 +960,7 @@ export default function ClientDashboard() {
       
       const invoiceData: InvoiceData = {
         invoiceNumber,
-        paymentDate: payment.paid_at || payment.paidAt,
+        paymentDate: payment.paidAt || payment.paidAt,
         amount: payment.amount,
         description: payment.description,
         paymentMethod: payment.payment_method || payment.paymentMethod,
@@ -1073,16 +1010,19 @@ export default function ClientDashboard() {
     return () => window.removeEventListener('error', handleError)
   }, [])
 
-  // Add fallback UI for loading state
-  if (isLoading) {
+  // Show loading state
+  if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-center">
-          <Loader2 className="h-8 w-8 animate-spin mx-auto" />
-          <p className="mt-2">Loading...</p>
-        </div>
+        <Loader2 className="h-8 w-8 animate-spin" />
       </div>
     )
+  }
+
+  // Redirect if not authenticated or wrong user type
+  if (!user || user.user_type !== 'client') {
+    router.replace('/')
+    return null
   }
 
   return (
@@ -1092,10 +1032,10 @@ export default function ClientDashboard() {
         userName={user?.full_name}
         orgName="Shan & Associates"
       />
-      <main className="flex-grow container mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">Client Dashboard</h1>
-          <div className="flex items-center space-x-4">
+      <main className="flex-grow container mx-auto px-4 py-4 sm:py-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 sm:mb-8 space-y-4 sm:space-y-0">
+          <h1 className="text-2xl sm:text-3xl font-bold">Client Dashboard</h1>
+          <div className="flex items-center space-x-4 w-full sm:w-auto justify-between sm:justify-end">
             <div className="flex items-center space-x-2 text-sm">
               <span className="text-gray-500">Welcome,</span>
               <span className="font-semibold">{user?.full_name || 'Guest'}</span>
@@ -1195,8 +1135,7 @@ export default function ClientDashboard() {
           </div>
         </div>
         
-        {/* Overview Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-8">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6 mb-6 sm:mb-8">
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Account Status</CardTitle>
@@ -1235,10 +1174,9 @@ export default function ClientDashboard() {
           </Card>
         </div>
 
-        {/* Recent Updates Card */}
-        <Card className="mb-8">
-          <CardHeader>
-            <div className="flex justify-between items-center">
+        <Card className="mb-6 sm:mb-8">
+          <CardHeader className="p-4 sm:p-6">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-2 sm:space-y-0">
               <CardTitle>Recent Updates</CardTitle>
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-500">
@@ -1247,7 +1185,7 @@ export default function ClientDashboard() {
               </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-4 sm:p-6">
             <div className="space-y-4">
               {/* Unread Notifications */}
               {unreadNotifications.length === 0 ? (
@@ -1291,49 +1229,52 @@ export default function ClientDashboard() {
                     ))}
                 </div>
               )}
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
 
         <Tabs defaultValue="jobs" className="space-y-4">
-          <TabsList className="w-full border-b">
-            <div className="container mx-auto flex justify-start gap-4">
+          <TabsList className="w-full border-b overflow-x-auto flex-nowrap">
+            <div className="container mx-auto flex justify-start gap-4 min-w-max px-4">
               <TabsTrigger 
                 value="jobs"
-                className="px-6 py-3 text-base font-medium data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
               >
                 My Jobs
               </TabsTrigger>
               <TabsTrigger 
                 value="payments"
-                className="px-6 py-3 text-base font-medium data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
               >
                 Payments
               </TabsTrigger>
               <TabsTrigger 
                 value="documents"
-                className="px-6 py-3 text-base font-medium data-[state=active]:border-b-2 data-[state=active]:border-blue-600"
+                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
               >
                 Documents
               </TabsTrigger>
-        </div>
+            </div>
           </TabsList>
 
           <TabsContent value="jobs" className="py-4">
             <Card className="shadow-md">
-              <CardHeader>
-                <div className="flex justify-between items-center">
+              <CardHeader className="p-4 sm:p-6">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
                   <CardTitle>My Jobs</CardTitle>
-                  <Button onClick={() => setJobRequestDialogOpen(true)}>
+                  <Button 
+                    onClick={() => setJobRequestDialogOpen(true)}
+                    className="w-full sm:w-auto"
+                  >
                     <Plus className="h-4 w-4 mr-2" />
                     Request New Job
                   </Button>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="p-4 sm:p-6">
                 {/* Job Requests Section */}
                 {jobRequests.length > 0 && (
-                  <div className="mb-8">
+                  <div className="mb-6 sm:mb-8">
                     <h3 className="text-lg font-semibold mb-4">Job Requests</h3>
                     <div className="space-y-4">
                       {jobRequests.map((request) => (
@@ -1341,7 +1282,7 @@ export default function ClientDashboard() {
                           key={request.id}
                           className="border rounded-lg p-4"
                         >
-                          <div className="flex justify-between items-start">
+                          <div className="flex flex-col sm:flex-row justify-between items-start space-y-2 sm:space-y-0">
                             <div>
                               <h4 className="font-medium">{request.title}</h4>
                               <p className="text-sm text-gray-500">Type: {request.type}</p>
@@ -1434,103 +1375,118 @@ export default function ClientDashboard() {
           </TabsContent>
 
           <TabsContent value="payments" className="py-4">
-            <Card className="shadow-md">
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Date</TableHead>
-                      <TableHead>Description</TableHead>
-                      <TableHead>Amount</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Action</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {payments.map((payment) => (
-                      <TableRow key={payment.id}>
-                        <TableCell>
-                          {formatPaymentDate(payment.date || payment.created_at)}
-                        </TableCell>
-                        <TableCell>{payment.description}</TableCell>
-                        <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
-                        <TableCell>
-                          <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
-                            payment.status === 'Paid' 
-                              ? 'bg-green-100 text-green-800 border border-green-200'
-                              : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                          }`}>
-                            {payment.status}
-                          </span>
-                          {payment.status === 'Paid' && payment.paymentMethod && (
-                            <div className="text-sm text-gray-500 mt-1">
-                              via {payment.paymentMethod}
-                              {payment.paidAt && (
-                                <span className="block">
-                                  on {formatSimpleDate(payment.paidAt)}
+            <Card className="shadow-md overflow-x-auto">
+              <CardContent className="p-4 sm:p-6">
+                <div className="min-w-[640px]">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Date</TableHead>
+                        <TableHead>Description</TableHead>
+                        <TableHead>Amount</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {payments.map((payment) => (
+                        <TableRow key={payment.id}>
+                          <TableCell>
+                            {formatPaymentDate(payment.date || payment.created_at)}
+                          </TableCell>
+                          <TableCell>{payment.description}</TableCell>
+                          <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
+                          <TableCell>
+                            <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
+                              payment.status === 'Paid' 
+                                ? 'bg-green-100 text-green-800 border border-green-200'
+                                : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                            }`}>
+                              {payment.status}
+                            </span>
+                            {payment.status === 'Paid' && payment.paymentMethod && (
+                              <div className="text-sm text-gray-500 mt-1">
+                                via {payment.paymentMethod}
+                                {payment.paidAt && (
+                                  <span className="block">
+                                    on {formatSimpleDate(payment.paidAt)}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              {(payment.status === 'Pending') && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handlePayment(payment.id)}
+                                >
+                                  {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
+                                </Button>
+                              )}
+                              {payment.status === 'Paid' && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleViewInvoice(payment)}
+                                >
+                                  <FileText className="h-4 w-4 mr-2" />
+                                  Invoice
+                                </Button>
+                              )}
+                              {payment.status === 'Waiting for Confirmation' && (
+                                <span className="text-yellow-600 flex items-center">
+                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  Awaiting Confirmation
                                 </span>
                               )}
                             </div>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {payment.status === 'Pending' ? (
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              className="flex items-center gap-2"
-                              onClick={() => handlePayment(payment.id)}
-                            >
-                              <IndianRupee className="h-4 w-4" />
-                              Pay Now
-                            </Button>
-                          ) : (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="flex items-center gap-2"
-                              onClick={() => handleViewInvoice(payment)}
-                            >
-                              <FileText className="h-4 w-4" />
-                              View Invoice
-                            </Button>
-                          )}
-                        </TableCell>
-                    </TableRow>
-                    ))}
-                    {payments.filter(p => p.status === 'Pending').length > 0 && (
-                    <TableRow>
-                        <TableCell colSpan={2} className="text-right font-medium text-lg">
-                          Total Pending Amount:
-                        </TableCell>
-                        <TableCell className="font-bold text-xl text-yellow-600">
-                          ₹{payments
-                            .filter(p => p.status === 'Pending')
-                            .reduce((sum, p) => sum + p.amount, 0)
-                            .toLocaleString()}
-                        </TableCell>
-                        <TableCell colSpan={2}></TableCell>
-                    </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
+                            {payment.rejection_reason && payment.status === 'Pending' && (
+                              <div className="text-sm text-red-600 mt-1">
+                                <div>Payment was rejected.</div>
+                                <div className="mt-1">
+                                  <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                                </div>
+                              </div>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                      {payments.filter(p => p.status === 'Pending').length > 0 && (
+                      <TableRow>
+                          <TableCell colSpan={2} className="text-right font-medium text-lg">
+                            Total Pending Amount:
+                          </TableCell>
+                          <TableCell className="font-bold text-xl text-yellow-600">
+                            ₹{payments
+                              .filter(p => p.status === 'Pending')
+                              .reduce((sum, p) => sum + p.amount, 0)
+                              .toLocaleString()}
+                          </TableCell>
+                          <TableCell colSpan={2}></TableCell>
+                      </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
 
           <TabsContent value="documents" className="py-4">
             <Card className="shadow-md">
-              <CardHeader>
+              <CardHeader className="p-4 sm:p-6">
                 <CardTitle>Required Documents</CardTitle>
               </CardHeader>
-              <CardContent>
-                <div className="space-y-6">
+              <CardContent className="p-4 sm:p-6">
+                <div className="space-y-4 sm:space-y-6">
                   {requiredDocuments.map((doc) => (
                     <div 
                       key={doc.id} 
                       className="p-4 border rounded-lg space-y-4"
                     >
-                      <div className="flex items-start justify-between">
+                      <div className="flex flex-col sm:flex-row items-start justify-between space-y-4 sm:space-y-0">
                         <div>
                           <h3 className="font-semibold">{doc.name}</h3>
                           <p className="text-sm text-gray-500">{doc.description}</p>
@@ -1553,13 +1509,13 @@ export default function ClientDashboard() {
                                 </span>
                               </p>
                             )}
-                  </div>
+                          </div>
                           {doc.feedback && (
                             <p className="text-sm text-red-600 mt-2">
                               Feedback: {doc.feedback}
                             </p>
                           )}
-                  </div>
+                        </div>
                         <div className="flex items-center gap-3">
                           <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
                             doc.status === 'Verified' 
@@ -1594,9 +1550,9 @@ export default function ClientDashboard() {
                           <p className="text-sm text-gray-500 text-center">
                             Uploading... {uploadProgress}%
                           </p>
-                  </div>
+                        </div>
                       )}
-                  </div>
+                    </div>
                   ))}
                 </div>
               </CardContent>
@@ -1608,9 +1564,9 @@ export default function ClientDashboard() {
       <PaymentDialog 
         open={paymentDialogOpen}
         onOpenChangeAction={setPaymentDialogOpen}
-        amount={selectedPayment?.amount || 0}
-        description={selectedPayment?.description || ''}
-        onConfirmAction={(method) => selectedPayment && handlePayment(selectedPayment.id)}
+        amount={selectedPayment ? payments.find(p => p.id === selectedPayment)?.amount || 0 : 0}
+        description={selectedPayment ? payments.find(p => p.id === selectedPayment)?.description || '' : ''}
+        onConfirmAction={(method) => selectedPayment && handlePayment(selectedPayment)}
       />
       <JobRequestDialog 
         open={jobRequestDialogOpen}
@@ -1641,6 +1597,14 @@ export default function ClientDashboard() {
             }
           }
         }}
+      />
+      <PaymentOptionsDialog
+        open={showPaymentOptions}
+        onOpenChange={setShowPaymentOptions}
+        amount={selectedPayment ? payments.find(p => p.id === selectedPayment)?.amount || 0 : 0}
+        paymentId={selectedPayment || 0}
+        onSelectOption={handlePaymentOption}
+        onPaymentComplete={fetchPayments}
       />
     </div>
   )

@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight, Loader2 } from "lucide-react"
 import { useAuth } from "@/contexts/AuthContext"
 import { toast } from "sonner"
 import { Textarea } from "@/components/ui/textarea"
+import { SignupWizard } from "./SignupWizard"
 
 interface AuthDialogProps {
   open: boolean
@@ -198,136 +199,7 @@ export function AuthDialog({ open, onOpenChangeAction, initialMode = 'signin' }:
             </div>
           </form>
         ) : (
-          <form onSubmit={handleSignUp} className="space-y-4">
-            {step === 1 && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="fullName">Full Name</Label>
-                  <Input 
-                    id="fullName" 
-                    placeholder="John Doe" 
-                    required 
-                    value={formData.fullName}
-                    onChange={handleInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input 
-                    id="email" 
-                    type="email" 
-                    placeholder="m@example.com" 
-                    required 
-                    value={formData.email}
-                    onChange={handleInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="mobile">Mobile Number</Label>
-                  <Input 
-                    id="mobile" 
-                    type="tel"
-                    placeholder="Enter your mobile number"
-                    pattern="[0-9]{10}"
-                    required 
-                    value={formData.mobile}
-                    onChange={handleInputChange}
-                  />
-                </div>
-              </>
-            )}
-
-            {step === 2 && (
-              <>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <Input 
-                    id="password" 
-                    type="password" 
-                    required 
-                    value={formData.password}
-                    onChange={handleInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="confirmPassword">Confirm Password</Label>
-                  <Input 
-                    id="confirmPassword" 
-                    type="password" 
-                    required 
-                    value={formData.confirmPassword}
-                    onChange={handleInputChange}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="address">Address</Label>
-                  <Textarea 
-                    id="address" 
-                    placeholder="Enter your full address"
-                    required 
-                    value={formData.address}
-                    onChange={(e) => setFormData(prev => ({
-                      ...prev,
-                      address: e.target.value
-                    }))}
-                  />
-                </div>
-              </>
-            )}
-
-            <div className="flex justify-between">
-              {step > 1 && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => setStep(prev => prev - 1)}
-                >
-                  <ChevronLeft className="mr-2 h-4 w-4" />
-                  Back
-                </Button>
-              )}
-              
-              {step === 1 ? (
-                <Button
-                  type="button"
-                  className="ml-auto"
-                  onClick={() => setStep(2)}
-                >
-                  Next
-                  <ChevronRight className="ml-2 h-4 w-4" />
-                </Button>
-              ) : (
-                <Button 
-                  type="submit"
-                  className="ml-auto"
-                  disabled={isLoading || !isHydrated}
-                >
-                  {isLoading ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Creating account...
-                    </>
-                  ) : (
-                    "Create account"
-                  )}
-                </Button>
-              )}
-            </div>
-
-            <div className="text-center text-sm">
-              <span className="text-gray-500">Already have an account?</span>{" "}
-              <Button 
-                variant="link" 
-                className="p-0" 
-                onClick={() => {
-                  setMode('signin')
-                  setStep(1)
-                }}
-              >
-                Sign in
-              </Button>
-            </div>
-          </form>
+          <SignupWizard onSuccessAction={() => setMode('signin')} />
         )}
       </DialogContent>
     </Dialog>

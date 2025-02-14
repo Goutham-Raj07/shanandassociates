@@ -1,10 +1,19 @@
-export interface User {
+export type User = {
   id: string
   email: string
   full_name: string
-  user_type: 'admin' | 'client'
   mobile: string
+  user_type: 'admin' | 'client'
   created_at: string
+  // Updated field name
+  address_line1?: string
+  address_line2?: string
+  city?: string
+  state?: string
+  pincode?: string
+  company_name?: string
+  gst_number?: string
+  pan_number?: string
 }
 
 export interface Job {
@@ -26,7 +35,7 @@ export interface Payment {
   client_id: string
   amount: number
   description: string
-  status: 'Pending' | 'Paid'
+  status: 'Pending' | 'Waiting for Confirmation' | 'Paid' | 'Rejected'
   payment_method?: string
   paid_at?: string
   created_at: string
