@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Bell, Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send, X } from "lucide-react"
+import { Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send, X } from "lucide-react"
 import { PaymentDialog } from "../components/PaymentDialog"
 import { JobRequestDialog, JobRequest } from "../components/JobRequestDialog"
 import { generateInvoicePDF } from "../components/Invoice"
@@ -51,9 +51,10 @@ type Job = {
 
 type Payment = {
   id: number
+  job_id: number
   amount: number
   description: string
-  status: 'Paid' | 'Pending' | 'Waiting for Confirmation'
+  status: 'Paid' | 'Pending' | 'Waiting for Confirmation' | 'Rejected'
   payment_method?: string | null
   paid_at?: string | null
   payment_details?: {
@@ -145,6 +146,28 @@ declare global {
   interface Window {
     Razorpay: any;
   }
+}
+
+// Update the processPayments helper function to handle latest payment status per job
+const processPayments = (payments: Payment[]) => {
+  // First group payments by job_id
+  const jobPayments = payments.reduce((acc: { [key: string]: Payment[] }, payment) => {
+    if (!acc[payment.job_id]) {
+      acc[payment.job_id] = []
+    }
+    acc[payment.job_id].push(payment)
+    return acc
+  }, {})
+
+  // For each job, get only the latest payment
+  return Object.values(jobPayments).map(jobPaymentGroup => {
+    // Sort payments by date (newest first)
+    const sortedPayments = jobPaymentGroup.sort((a, b) => 
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    // Return only the latest payment for each job
+    return sortedPayments[0]
+  })
 }
 
 export default function ClientDashboard() {
@@ -240,6 +263,7 @@ export default function ClientDashboard() {
               }
             })
           } else if (payload.eventType === 'UPDATE') {
+            // Handle payment status updates
             if (payload.new.status === 'Paid') {
               addNotification({
                 type: 'payment',
@@ -249,9 +273,26 @@ export default function ClientDashboard() {
                   status: 'Paid'
                 }
               })
+              // Show success toast
+              toast.success('Payment confirmed', {
+                description: `Payment of ₹${payload.new.amount.toLocaleString()} has been confirmed`
+              })
+            } else if (payload.new.status === 'Rejected') {
+              addNotification({
+                type: 'payment',
+                message: `Payment of ₹${payload.new.amount.toLocaleString()} was rejected. Reason: ${payload.new.rejection_reason}`,
+                data: {
+                  amount: payload.new.amount,
+                  status: 'Rejected'
+                }
+              })
+              // Show error toast
+              toast.error('Payment rejected', {
+                description: payload.new.rejection_reason
+              })
             }
           }
-          await loadClientData()
+          await loadClientData() // Refresh the data
         }
       )
       .subscribe()
@@ -919,22 +960,29 @@ export default function ClientDashboard() {
   const unreadNotifications = allNotifications.filter(n => !n.read)
   const readNotifications = allNotifications.filter(n => n.read)
 
+  // Update the fetchPayments function to include job_id in the selection
   const fetchPayments = async () => {
     if (!user?.id) return;
 
     try {
       const { data, error } = await supabase
         .from('payments')
-        .select('*')
+        .select(`
+          *,
+          job:job_id (
+            id,
+            title
+          )
+        `)
         .eq('client_id', user.id)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
       if (data) {
-        // Transform the data to match your Payment type
         const transformedPayments = data.map((payment: any) => ({
           ...payment,
+          job_id: payment.job_id,
           created_at: payment.date || payment.created_at || new Date().toISOString(),
           date: payment.date,
           amount: payment.amount,
@@ -1040,98 +1088,6 @@ export default function ClientDashboard() {
               <span className="text-gray-500">Welcome,</span>
               <span className="font-semibold">{user?.full_name || 'Guest'}</span>
             </div>
-            <div className="relative">
-              <Button 
-                id="notification-button"
-                variant="outline" 
-                size="icon"
-                className="relative"
-                onClick={() => setShowNotifications(!showNotifications)}
-              >
-                <Bell className="h-5 w-5" />
-                {notifications.filter(n => !n.read).length > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center">
-                    {notifications.filter(n => !n.read).length}
-                  </span>
-                )}
-              </Button>
-
-              {showNotifications && (
-                <div 
-                  id="notification-dropdown"
-                  className="absolute right-0 mt-2 w-96 bg-white rounded-lg shadow-lg border z-50"
-                >
-                  <div className="p-4 max-h-[500px] overflow-y-auto">
-                    {notifications.length === 0 ? (
-                      <p className="text-gray-500 text-center">No notifications</p>
-                    ) : (
-                      <>
-                        {/* Unread Notifications */}
-                        {notifications.some(n => !n.read) && (
-                          <div className="mb-4">
-                            <h3 className="text-sm font-semibold text-gray-500 mb-2">New Updates</h3>
-                            {notifications
-                              .filter(n => !n.read)
-                              .map((notification) => (
-                                <NotificationItem 
-                                  key={notification.id} 
-                                  notification={notification}
-                                  onRead={markAsRead}
-                                  formatDate={formatDate}
-                                />
-                              ))}
-                          </div>
-                        )}
-
-                        {/* Read Notifications */}
-                        {notifications.some(n => n.read) && (
-                          <div>
-                            <div className="flex justify-between items-center mb-2">
-                              <h3 className="text-sm font-semibold text-gray-500">Earlier</h3>
-                              <Button 
-                                variant="ghost" 
-                                size="sm"
-                                onClick={deleteAllReadNotifications}
-                                className="text-red-500 hover:text-red-600"
-                              >
-                                Clear All
-                              </Button>
-                            </div>
-                            {notifications
-                              .filter(n => n.read)
-                              .slice(0, 10) // Show last 10 read notifications
-                              .map((notification) => (
-                                <NotificationItem 
-                                  key={notification.id} 
-                                  notification={notification}
-                                  onRead={markAsRead}
-                                  formatDate={formatDate}
-                                />
-                              ))}
-                            {notifications.filter(n => n.read).length > 10 && (
-                              <p className="text-sm text-gray-500 text-center mt-2">
-                                Showing last 10 notifications
-                              </p>
-                            )}
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div className="p-2 border-t">
-                    {notifications.some(n => !n.read) && (
-                      <Button
-                        variant="ghost"
-                        className="w-full text-sm"
-                        onClick={markAllAsRead}
-                      >
-                        Mark all as read
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
         
@@ -1166,7 +1122,8 @@ export default function ClientDashboard() {
             </CardHeader>
             <CardContent>
               <p className="text-2xl font-bold text-yellow-600">
-                ₹{payments.filter(p => p.status === 'Pending')
+                ₹{processPayments(payments)
+                  .filter(p => p.status === 'Pending')
                   .reduce((sum, p) => sum + p.amount, 0)
                   .toLocaleString()}
               </p>
@@ -1389,83 +1346,89 @@ export default function ClientDashboard() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {payments.map((payment) => (
-                        <TableRow key={payment.id}>
-                          <TableCell>
-                            {formatPaymentDate(payment.date || payment.created_at)}
-                          </TableCell>
-                          <TableCell>{payment.description}</TableCell>
-                          <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
-                          <TableCell>
-                            <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
-                              payment.status === 'Paid' 
-                                ? 'bg-green-100 text-green-800 border border-green-200'
-                                : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                            }`}>
-                              {payment.status}
-                            </span>
-                            {payment.status === 'Paid' && payment.paymentMethod && (
-                              <div className="text-sm text-gray-500 mt-1">
-                                via {payment.paymentMethod}
-                                {payment.paidAt && (
-                                  <span className="block">
-                                    on {formatSimpleDate(payment.paidAt)}
+                      {processPayments(payments)
+                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                        .map((payment) => (
+                          <TableRow key={payment.id}>
+                            <TableCell>
+                              {formatPaymentDate(payment.date || payment.created_at)}
+                            </TableCell>
+                            <TableCell>{payment.description}</TableCell>
+                            <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
+                            <TableCell>
+                              <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
+                                payment.status === 'Paid' 
+                                  ? 'bg-green-100 text-green-800 border border-green-200'
+                                  : payment.status === 'Waiting for Confirmation'
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                  : payment.status === 'Rejected'
+                                  ? 'bg-red-100 text-red-800 border border-red-200'
+                                  : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                              }`}>
+                                {payment.status}
+                              </span>
+                              {payment.status === 'Paid' && payment.paymentMethod && (
+                                <div className="text-sm text-gray-500 mt-1">
+                                  via {payment.paymentMethod}
+                                  {payment.paidAt && (
+                                    <span className="block">
+                                      on {formatSimpleDate(payment.paidAt)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex items-center gap-2">
+                                {(payment.status === 'Pending') && (
+                                  <Button
+                                    size="sm"
+                                    onClick={() => handlePayment(payment.id)}
+                                  >
+                                    {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
+                                  </Button>
+                                )}
+                                {payment.status === 'Paid' && (
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleViewInvoice(payment)}
+                                  >
+                                    <FileText className="h-4 w-4 mr-2" />
+                                    Invoice
+                                  </Button>
+                                )}
+                                {payment.status === 'Waiting for Confirmation' && (
+                                  <span className="text-yellow-600 flex items-center">
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                    Awaiting Confirmation
                                   </span>
                                 )}
                               </div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              {(payment.status === 'Pending') && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handlePayment(payment.id)}
-                                >
-                                  {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
-                                </Button>
-                              )}
-                              {payment.status === 'Paid' && (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleViewInvoice(payment)}
-                                >
-                                  <FileText className="h-4 w-4 mr-2" />
-                                  Invoice
-                                </Button>
-                              )}
-                              {payment.status === 'Waiting for Confirmation' && (
-                                <span className="text-yellow-600 flex items-center">
-                                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                  Awaiting Confirmation
-                                </span>
-                              )}
-                            </div>
-                            {payment.rejection_reason && payment.status === 'Pending' && (
-                              <div className="text-sm text-red-600 mt-1">
-                                <div>Payment was rejected.</div>
-                                <div className="mt-1">
-                                  <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                              {payment.rejection_reason && payment.status === 'Pending' && (
+                                <div className="text-sm text-red-600 mt-1">
+                                  <div>Payment was rejected.</div>
+                                  <div className="mt-1">
+                                    <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                      {payments.filter(p => p.status === 'Pending').length > 0 && (
-                      <TableRow>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      {processPayments(payments).filter(p => p.status === 'Pending').length > 0 && (
+                        <TableRow>
                           <TableCell colSpan={2} className="text-right font-medium text-lg">
                             Total Pending Amount:
                           </TableCell>
                           <TableCell className="font-bold text-xl text-yellow-600">
-                            ₹{payments
+                            ₹{processPayments(payments)
                               .filter(p => p.status === 'Pending')
                               .reduce((sum, p) => sum + p.amount, 0)
                               .toLocaleString()}
                           </TableCell>
                           <TableCell colSpan={2}></TableCell>
-                      </TableRow>
+                        </TableRow>
                       )}
                     </TableBody>
                   </Table>

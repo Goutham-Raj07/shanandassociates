@@ -110,6 +110,46 @@ export function AddOfflinePaymentDialog({
 
     setIsSubmitting(true)
     try {
+      // First, find any pending payment requests for this job
+      const { data: pendingPayments, error: searchError } = await supabase
+        .from('payments')
+        .select('id, amount')
+        .eq('job_id', jobDetails.id)
+        .eq('status', 'Pending')
+
+      if (searchError) throw searchError
+
+      // If there's a pending payment, update it with new amount and status
+      if (pendingPayments && pendingPayments.length > 0) {
+        const { error: updateError } = await supabase
+          .from('payments')
+          .update({
+            status: 'Paid',
+            payment_method: paymentMode,
+            paid_at: new Date().toISOString(),
+            amount: jobDetails.amount  // Update with the new amount
+          })
+          .eq('id', pendingPayments[0].id)
+
+        if (updateError) throw updateError
+      } else {
+        // If no pending payment exists, create new payment record
+        const { error: paymentError } = await supabase
+          .from('payments')
+          .insert({
+            job_id: jobDetails.id,
+            client_id: jobDetails.client?.id,
+            amount: jobDetails.amount,
+            description: `Payment for ${jobDetails.title}`,
+            status: 'Paid',
+            payment_method: paymentMode,
+            paid_at: new Date().toISOString()
+          })
+
+        if (paymentError) throw paymentError
+      }
+
+      // Update job payment status
       const { error: jobError } = await supabase
         .from('jobs')
         .update({
@@ -118,20 +158,6 @@ export function AddOfflinePaymentDialog({
         .eq('id', jobDetails.id)
 
       if (jobError) throw jobError
-
-      const { error: paymentError } = await supabase
-        .from('payments')
-        .insert({
-          job_id: jobDetails.id,
-          client_id: jobDetails.client?.id,
-          amount: jobDetails.amount,
-          description: `Payment for ${jobDetails.title}`,
-          status: 'Paid',
-          payment_method: paymentMode,
-          paid_at: new Date().toISOString()
-        })
-
-      if (paymentError) throw paymentError
 
       toast.success('Payment added successfully')
       onSuccessAction()

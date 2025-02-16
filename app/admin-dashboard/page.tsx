@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
-import { Plus, Send, Download, MessageCircle, MessageSquare, ChevronRight, ChevronLeft, FileText, IndianRupee, MapPin, Search, X } from "lucide-react"
+import { Plus, Send, Download, MessageCircle, MessageSquare, ChevronRight, ChevronLeft, FileText, IndianRupee, MapPin, Search, X, Users2, Briefcase, ClipboardList } from "lucide-react"
 import { Checkbox } from "@/components/ui/checkbox"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { apiRequest } from '@/lib/api-helpers'
@@ -36,6 +36,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { RequestDocumentDialog } from "../components/RequestDocumentDialog"
+import { Building2 } from 'lucide-react' // Add this import
 
 // Add these type definitions at the top
 type MessageWizardStep = 1 | 2 | 3
@@ -106,6 +107,7 @@ interface Job {
     status: string
     amount: number
     created_at: string
+    payment_method?: string  // Add this line
   }[]
 }
 
@@ -130,7 +132,7 @@ type Client = {
   full_name: string
   mobile: string
   created_at: string
-  status: 'Active' | 'Pending'
+  status: 'Active' | 'Inactive' // Changed from 'Pending' to 'Inactive'
   total_jobs: number
   pending_payments: number
   address_line1?: string
@@ -169,13 +171,12 @@ const formatSimpleDate = (dateString: string) => {
   })
 }
 
+// Add this helper function at the top of the file
 const isNewClient = (createdAt: string) => {
-  const clientDate = new Date(createdAt)
-  const now = new Date()
-  const diffTime = Math.abs(now.getTime() - clientDate.getTime())
-  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-  return diffDays <= 7 // Consider clients from last 7 days as new
-}
+  const threeDaysAgo = new Date();
+  threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+  return new Date(createdAt) > threeDaysAgo;
+};
 
 // Add this helper function to format time ago
 const formatTimeAgo = (timestamp: string) => {
@@ -407,6 +408,9 @@ export default function AdminDashboard() {
   // Add this state for expanded message in history
   const [expandedHistoryMessage, setExpandedHistoryMessage] = useState<number | null>(null)
 
+  // Add this state near other state declarations
+  const [showCompletedJobs, setShowCompletedJobs] = useState(false)
+
   // Add this function to filter messages
   const filteredMessages = useMemo(() => {
     const query = messageSearchQuery.toLowerCase()
@@ -552,31 +556,14 @@ export default function AdminDashboard() {
     }
   }
 
+  // Update the loadAdminData function to properly handle payment status
   const loadAdminData = async () => {
     try {
       setIsLoading(true)
       
-      // Fetch job requests
-      const { data: jobRequestsData, error: jobRequestsError } = await supabase
-        .from('job_requests')
-        .select(`
-          *,
-          client:client_id (
-            id,
-            full_name,
-            email
-          )
-        `)
-        .order('created_at', { ascending: false })
-
-      if (jobRequestsError) throw jobRequestsError
-      setJobRequests(jobRequestsData || [])
-
-      // Load all data in parallel with additional calculations
       const [
         { data: clientsData, error: clientsError },
         { data: jobsData, error: jobsError },
-        { data: paymentsData, error: paymentsError },
         { data: documentsData, error: documentsError },
       ] = await Promise.all([
         // Load clients
@@ -585,7 +572,7 @@ export default function AdminDashboard() {
           .select('*')
           .eq('user_type', 'client'),
         
-        // Load jobs with client info
+        // Load jobs with client info and ALL payments
         supabase
           .from('jobs')
           .select(`
@@ -594,19 +581,16 @@ export default function AdminDashboard() {
               full_name,
               email
             ),
-            payments:payments (
+            payments!payments_job_id_fkey (
+              id,
               status,
               amount,
-              created_at
+              created_at,
+              payment_method,
+              job_id
             )
           `)
           .order('created_at', { ascending: false }),
-        
-        // Load payments
-        supabase
-          .from('payments')
-          .select('*')
-          .eq('status', 'Pending'),
         
         // Load documents
         supabase
@@ -622,19 +606,52 @@ export default function AdminDashboard() {
           .order('created_at', { ascending: false }),
       ])
 
-      if (clientsError || jobsError || paymentsError || documentsError) 
+      if (clientsError || jobsError || documentsError) 
         throw new Error('Error fetching data')
 
-      // Process clients with total jobs, pending payments and status
+      // Process jobs to include payment status based on latest payment
+      const processedJobs = (jobsData || []).map(job => {
+        // Sort payments by creation date (newest first)
+        const sortedPayments = job.payments?.sort((a: any, b: any) => 
+          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+        ) || []
+
+        // Get the latest payment
+        const latestPayment = sortedPayments[0]
+
+        return {
+          ...job,
+          payment_status: latestPayment?.status || 'Pending',
+          payments: sortedPayments
+        }
+      })
+
+      // Process clients with total jobs and pending payments
       const processedClients = (clientsData || []).map(client => {
         const clientJobs = (jobsData || []).filter(job => job.client_id === client.id)
-        const pendingPayments = (paymentsData || [])
-          .filter(payment => payment.client_id === client.id)
-          .reduce((sum, payment) => sum + (Number(payment.amount) || 0), 0)
+        
+        // Calculate pending payments by checking latest payment for each job
+        const pendingPayments = clientJobs.reduce((total, job) => {
+          // Get all payments for this job, sorted by creation date (newest first)
+          const jobPayments = job.payments?.sort((a: any, b: any) => 
+            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+          ) || []
+
+          // Get the latest payment
+          const latestPayment = jobPayments[0]
+
+          // Add to total if the latest payment is pending or waiting for confirmation
+          if (latestPayment && 
+              (latestPayment.status === 'Pending' || 
+               latestPayment.status === 'Waiting for Confirmation')) {
+            return total + (Number(latestPayment.amount) || 0)
+          }
+          return total
+        }, 0)
 
         // Determine status based on activity
         const hasActiveJobs = clientJobs.some(job => job.status === 'In Progress')
-        const status = hasActiveJobs ? 'Active' : 'Pending'
+        const status = hasActiveJobs ? 'Active' : 'Inactive'
 
         return {
           ...client,
@@ -643,18 +660,6 @@ export default function AdminDashboard() {
           status: status
         }
       })
-
-      // Process jobs to include payment status
-      const processedJobs = jobsData?.map(job => {
-        const sortedPayments = job.payments?.sort((a: any, b: any) => 
-          new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-        )
-        
-        return {
-          ...job,
-          payment_status: sortedPayments?.[0]?.status || 'Pending'
-        }
-      }) || []
 
       // Update states
       setClients(processedClients)
@@ -935,11 +940,17 @@ export default function AdminDashboard() {
   }
 
   // Update the filteredJobs function
-  const filteredJobs = jobs.filter(job => {
+  const filteredJobs = jobs
+    .filter(job => {
+      // First filter by completion status
+      if (!showCompletedJobs && job.status === 'Completed') {
+        return false
+      }
+
+      // Then filter by search term
     const searchTerm = jobSearch.toLowerCase().trim()
-    if (!searchTerm) return true // Show all jobs when search is empty
+      if (!searchTerm) return true
     
-    // Search across multiple fields
     const jobId = job.id.toString()
     const jobTitle = (job.title || '').toLowerCase()
     const clientName = (job.client?.full_name || '').toLowerCase()
@@ -949,10 +960,21 @@ export default function AdminDashboard() {
            jobTitle.includes(searchTerm) ||
            clientName.includes(searchTerm) ||
            clientEmail.includes(searchTerm)
-  }).sort((a, b) => {
-    const dateA = new Date(a.deadline).getTime()
-    const dateB = new Date(b.deadline).getTime()
-    return sortOrder === 'asc' ? dateA - dateB : dateB - dateA
+    })
+    .sort((a, b) => {
+      // Always keep completed jobs at the bottom
+      if (a.status !== b.status) {
+        return a.status === 'Completed' ? 1 : -1
+      }
+
+      // For jobs with the same status, sort by deadline proximity
+      const today = new Date()
+      const deadlineA = new Date(a.deadline)
+      const deadlineB = new Date(b.deadline)
+      const daysUntilA = Math.ceil((deadlineA.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+      const daysUntilB = Math.ceil((deadlineB.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+      
+      return daysUntilA - daysUntilB
   })
 
   // Add this function to load clients data
@@ -1243,28 +1265,6 @@ export default function AdminDashboard() {
             <span className="font-semibold">{user?.full_name || 'Admin'}</span>
           </div>
         </div>
-        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
-          <Select
-            value={filterStatus}
-            onValueChange={(value) => setFilterStatus(value)}
-          >
-            <SelectTrigger className="w-full sm:w-40">
-              <SelectValue placeholder="Filter status" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All statuses</SelectItem>
-              <SelectItem value="In Progress">In Progress</SelectItem>
-              <SelectItem value="Completed">Completed</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-            className="w-full sm:w-auto"
-          >
-            Sort {sortOrder === 'asc' ? '↑' : '↓'}
-          </Button>
-        </div>
       </div>
     </div>
   )
@@ -1418,6 +1418,30 @@ export default function AdminDashboard() {
     }
   }
 
+  // Add this function to handle payment approval
+  const handlePaymentApproval = async (jobId: number, paymentId: number) => {
+    try {
+      // Update the payment status
+      const { error: paymentError } = await supabase
+        .from('payments')
+        .update({
+          status: 'Paid',
+          paid_at: new Date().toISOString()
+        })
+        .eq('id', paymentId)
+
+      if (paymentError) throw paymentError
+
+      // Refresh the data
+      await loadAdminData()
+      
+      toast.success('Payment approved successfully')
+    } catch (error) {
+      console.error('Error approving payment:', error)
+      toast.error('Failed to approve payment')
+    }
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar 
@@ -1557,123 +1581,202 @@ export default function AdminDashboard() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Recent Messages</CardTitle>
-              <div className="flex items-center gap-1">
-                <Button 
-                  variant="ghost" 
-                  className="h-8 w-8 p-0"
-                  onClick={() => {
-                    if (messagesPage > 0) {
-                      setMessagesPage(prev => prev - 1)
-                    } else {
-                      setMessagesPage(Math.floor((messageHistory.length - 1) / 5))
-                    }
-                  }}
-                  disabled={messageHistory.length <= 5}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-xs text-gray-500 w-12 text-center">
-                  {Math.min(messagesPage * 5 + 5, messageHistory.length)}/{messageHistory.length}
-                </span>
-                <Button 
-                  variant="ghost" 
-                  className="h-8 w-8 p-0"
-                  onClick={() => {
-                    if (messageHistory.length > (messagesPage + 1) * 5) {
-                      setMessagesPage(prev => prev + 1)
-                    } else {
-                      setMessagesPage(0)
-                    }
-                  }}
-                  disabled={messageHistory.length <= 5}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+              <CardTitle className="text-sm font-medium">Payments Waiting Confirmation</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {messageHistory.slice(messagesPage * 5, (messagesPage + 1) * 5).map((message) => (
-                  <div key={message.id} className="flex items-center justify-between py-2">
+                {jobs
+                  .filter(job => job.payments?.some(payment => payment.status === 'Waiting for Confirmation'))
+                  .slice(0, 5)
+                  .map((job) => {
+                    const waitingPayment = job.payments?.find(payment => payment.status === 'Waiting for Confirmation')
+                    return (
+                      <div key={job.id} className="flex items-center justify-between py-2">
                     <div>
-                      <p className="text-sm font-medium line-clamp-1">{message.content}</p>
-                      <p className="text-xs text-gray-500">{message.recipients} recipient(s)</p>
-                    </div>
-                    <span className="text-xs text-gray-500">
-                      {formatTimeAgo(message.sent_at)}
+                          <div className="flex items-center gap-2">
+                            <p className="text-sm font-medium">₹{waitingPayment?.amount.toLocaleString()}</p>
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
+                              {waitingPayment?.payment_method || 'Bank Transfer'}
                     </span>
                   </div>
-                ))}
-                {messageHistory.length === 0 && (
-                  <p className="text-sm text-gray-500 text-center py-2">No recent messages</p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            {job.title} • {job.client?.full_name}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {formatTimeAgo(waitingPayment?.created_at || '')}
+                          </p>
+                        </div>
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          onClick={() => router.push('/admin-dashboard/payments')}
+                        >
+                          View & Approve
+                        </Button>
+                      </div>
+                    )
+                })}
+                {jobs.filter(job => job.payments?.some(payment => payment.status === 'Waiting for Confirmation')).length === 0 && (
+                  <p className="text-sm text-gray-500 text-center py-2">No payments waiting confirmation</p>
                 )}
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <Tabs defaultValue="clients">
-          <TabsList className="w-full border-b overflow-x-auto flex-nowrap">
-            <div className="container mx-auto flex justify-start gap-4 min-w-max px-4">
+        <Tabs defaultValue="clients" value={selectedTab} onValueChange={setSelectedTab}>
+          {/* Mobile/Tablet View */}
+          <div className="sm:hidden">
+            <Select
+              value={selectedTab}
+              onValueChange={setSelectedTab}
+            >
+              <SelectTrigger className="w-full mb-4">
+                <SelectValue>
+                  {selectedTab === 'clients' && 'Manage Clients'}
+                  {selectedTab === 'jobs' && 'Manage Jobs'}
+                  {selectedTab === 'documents' && 'Documents'}
+                  {selectedTab === 'jobRequests' && 'Job Requests'}
+                  {selectedTab === 'messages' && 'Messages'}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="clients">
+                  <div className="flex items-center gap-2">
+                    <Users2 className="h-4 w-4" />
+                    Manage Clients
+                  </div>
+                </SelectItem>
+                <SelectItem value="jobs">
+                  <div className="flex items-center gap-2">
+                    <Briefcase className="h-4 w-4" />
+                    Manage Jobs
+                  </div>
+                </SelectItem>
+                <SelectItem value="documents">
+                  <div className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Documents
+                  </div>
+                </SelectItem>
+                <SelectItem value="jobRequests">
+                  <div className="flex items-center gap-2">
+                    <ClipboardList className="h-4 w-4" />
+                    Job Requests
+                  </div>
+                </SelectItem>
+                <SelectItem value="messages">
+                  <div className="flex items-center gap-2">
+                    <MessageSquare className="h-4 w-4" />
+                    Messages
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Desktop View */}
+          <TabsList className="hidden sm:block w-full border-b bg-white sticky top-0 z-10">
+            <div className="container mx-auto px-2 sm:px-4 overflow-x-auto">
+              <div className="flex min-w-max space-x-2 py-1">
               <TabsTrigger 
                 value="clients"
-                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+                  className="px-3 py-2 text-sm rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
+                  <Users2 className="h-4 w-4 mr-2" />
                 Manage Clients
               </TabsTrigger>
               <TabsTrigger 
                 value="jobs"
-                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+                  className="px-3 py-2 text-sm rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
+                  <Briefcase className="h-4 w-4 mr-2" />
                 Manage Jobs
               </TabsTrigger>
               <TabsTrigger 
                 value="documents"
-                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+                  className="px-3 py-2 text-sm rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
+                  <FileText className="h-4 w-4 mr-2" />
                 Documents
               </TabsTrigger>
               <TabsTrigger 
                 value="jobRequests"
-                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+                  className="px-3 py-2 text-sm rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
+                  <ClipboardList className="h-4 w-4 mr-2" />
                 Job Requests
               </TabsTrigger>
               <TabsTrigger 
                 value="messages"
-                className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
+                  className="px-3 py-2 text-sm rounded-md data-[state=active]:bg-primary data-[state=active]:text-primary-foreground transition-all"
               >
+                  <MessageSquare className="h-4 w-4 mr-2" />
                 Messages
               </TabsTrigger>
+              </div>
             </div>
           </TabsList>
+
           <TabsContent value="clients">
             <Card>
               <CardHeader>
+                <div className="space-y-4 sm:space-y-0">
                 <div className="flex items-center justify-between">
                   <CardTitle>Manage Clients</CardTitle>
-                  <div className="flex items-center gap-4">
-                    <div className="relative w-72">
+                    <Button
+                      onClick={() => router.push('/admin-dashboard/add-user')}
+                      className="hidden sm:flex items-center gap-2"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add New Client
+                    </Button>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+                    <div className="relative flex-1">
                       <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
                       <Input
                         placeholder="Search by name or email..."
                         value={clientSearch}
                         onChange={(e) => setClientSearch(e.target.value)}
-                        className="pl-8 h-9"
+                        className="pl-8 h-9 w-full"
                       />
                     </div>
                     <Button 
                       onClick={() => router.push('/admin-dashboard/add-user')}
-                      className="flex items-center gap-2"
+                      className="sm:hidden flex items-center gap-2 justify-center"
                     >
                       <Plus className="h-4 w-4" />
-                      Add Client
+                      Add New Client
                     </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+              <CardContent className="p-4">
+                {/* Mobile/Tablet View */}
+                <div className="sm:hidden space-y-4">
+                  {filteredClients.map((client) => (
+                    <div key={client.id} className="relative flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <div>
+                          <p className="font-medium flex items-center gap-2">
+                            {client.full_name}
+                            {isNewClient(client.created_at) && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                                NEW
+                              </span>
+                            )}
+                          </p>
+                          <p className="text-sm text-gray-500">{client.email}</p>
+                        </div>
+                      </div>
+                      {/* ... rest of your client card content ... */}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop View */}
+                <div className="hidden sm:block overflow-x-auto">
                 <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
@@ -1745,7 +1848,7 @@ export default function AdminDashboard() {
                               <span className={`px-2 py-1 rounded-full text-xs ${
                                 client.status === 'Active' 
                                   ? 'bg-green-100 text-green-800' 
-                                  : 'bg-yellow-100 text-yellow-800'
+                                  : 'bg-red-100 text-red-800' // Changed from yellow to red for Inactive
                               }`}>
                                 {client.status}
                               </span>
@@ -1755,24 +1858,183 @@ export default function AdminDashboard() {
                   </TableBody>
                 </Table>
                 </div>
+                </div>
+
+                {filteredClients.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    No clients found
+                  </div>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="jobs" className="py-4">
             <Card>
-              <CardHeader className="p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
+              <CardHeader className="p-4">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
                   <CardTitle>Job List</CardTitle>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
-                    <Input
-                      placeholder="Search by job ID, title, client name or email..."
-                      value={jobSearch}
-                      onChange={(e) => setJobSearch(e.target.value)}
-                      className="w-full sm:w-[320px]"
-                    />
                     <Dialog>
                       <DialogTrigger asChild>
-                        <Button className="w-full sm:w-auto">
+                        <Button className="hidden sm:flex">
+                          <Plus className="mr-2 h-4 w-4" /> New Job
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Create New Job</DialogTitle>
+                        </DialogHeader>
+                        <form onSubmit={handleCreateJob}>
+                          <div className="grid gap-4 py-4">
+                            {/* Add this in the job creation dialog, before the client selection dropdown */}
+                            <div className="space-y-4">
+                              <Label>Select Client</Label>
+                              
+                              <div className="space-y-2">
+                                {selectedClientId ? (
+                                  <div className="flex items-center justify-between border rounded-lg p-3">
+                                    {clients
+                                      .filter(client => client.id === selectedClientId)
+                                      .map((client) => (
+                                        <div key={client.id} className="flex items-center justify-between w-full">
+                                          <div className="flex flex-col">
+                                            <span className="font-medium">{client.full_name || 'Unnamed Client'}</span>
+                                            <span className="text-xs text-gray-500">{client.email || 'No email'}</span>
+                                          </div>
+                                          <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => {
+                                              setSelectedClientId('')
+                                              setClientSearch('')
+                                            }}
+                                          >
+                                            <X className="h-4 w-4" />
+                                          </Button>
+                                        </div>
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="relative">
+                                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                    <Input
+                                        placeholder="Search clients by name or email..."
+                                        value={clientSearch}
+                                        onChange={(e) => setClientSearch(e.target.value)}
+                                        className="pl-8"
+                                      />
+                                    </div>
+
+                                    {clientSearch && (
+                                      <div className="border rounded-lg divide-y">
+                                        {clients
+                                          .filter(client => {
+                                            const searchTerm = clientSearch.toLowerCase();
+                                            const fullName = (client.full_name || '').toLowerCase();
+                                            const email = (client.email || '').toLowerCase();
+                                            
+                                            return fullName.includes(searchTerm) || email.includes(searchTerm);
+                                          })
+                                          .slice(0, 3)
+                                          .map((client) => (
+                                            <div
+                                              key={client.id}
+                                              className="p-2 cursor-pointer hover:bg-gray-50"
+                                              onClick={() => {
+                                                setSelectedClientId(client.id)
+                                                setClientSearch('')
+                                              }}
+                                            >
+                                              <div className="flex flex-col">
+                                                <span className="font-medium">{client.full_name || 'Unnamed Client'}</span>
+                                                <span className="text-xs text-gray-500">{client.email || 'No email'}</span>
+                                              </div>
+                                            </div>
+                                          ))}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="jobTitle" className="text-right">
+                                Job Title
+                              </Label>
+                              <Input
+                                id="jobTitle"
+                                name="jobTitle"
+                                placeholder="Enter job title"
+                                className="col-span-3"
+                                required
+                              />
+                            </div>
+
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="jobType" className="text-right">
+                                Job Type
+                              </Label>
+                              <div className="col-span-3">
+                                <Select
+                                  name="jobType"
+                                  required
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select job type..." />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {JOB_TYPES.map((type) => (
+                                      <SelectItem key={type} value={type}>
+                                        {type}
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-4 items-center gap-4">
+                              <Label htmlFor="deadline" className="text-right">
+                                Deadline
+                              </Label>
+                              <Input 
+                                id="deadline" 
+                                name="deadline"
+                                type="date" 
+                                className="col-span-3"
+                                min={new Date().toISOString().split('T')[0]}
+                                required 
+                              />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-4">
+                            <Button type="submit" disabled={buttonStates['createJob']}>
+                              {buttonStates['createJob'] ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                'Create Job'
+                              )}
+                            </Button>
+                          </div>
+                        </form>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                      <Input
+                        placeholder="Search jobs..."
+                      value={jobSearch}
+                      onChange={(e) => setJobSearch(e.target.value)}
+                        className="pl-8 w-full"
+                    />
+                    </div>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button className="sm:hidden w-full">
                           <Plus className="mr-2 h-4 w-4" /> New Job
                         </Button>
                       </DialogTrigger>
@@ -1920,7 +2182,104 @@ export default function AdminDashboard() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+              <CardContent className="p-4">
+                {/* Mobile/Tablet View */}
+                <div className="sm:hidden space-y-4">
+                  {filteredJobs.map((job) => (
+                    <div key={job.id} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <p className="font-medium">{job.title}</p>
+                            <span className={`px-2 py-1 text-xs rounded-full ${
+                              job.status === 'Completed' 
+                                ? 'bg-green-100 text-green-800'
+                                : 'bg-blue-100 text-blue-800'
+                            }`}>
+                              {job.status}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-500">#{job.id} • {job.type}</p>
+                          <div className="text-sm text-gray-500">
+                            <p>{job.client?.full_name}</p>
+                            <p className="text-xs">{job.client?.email}</p>
+                          </div>
+                        </div>
+                        <p className={`text-sm font-medium ${
+                          new Date(job.deadline) < new Date() 
+                            ? "text-red-600" 
+                            : "text-gray-600"
+                        }`}>
+                          {formatSimpleDate(job.deadline)}
+                        </p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex-1">
+                            <div className="w-full bg-gray-200 rounded-full h-2">
+                              <div
+                                className="bg-blue-600 h-2 rounded-full"
+                                style={{ width: `${job.progress}%` }}
+                              ></div>
+                            </div>
+                          </div>
+                          <span className="text-sm text-gray-600 min-w-[40px] text-right">
+                            {job.progress}%
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600">{job.latest_update}</p>
+                      </div>
+
+                      <div className="flex gap-2 pt-2 border-t">
+                        <Button 
+                          size="sm" 
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => {
+                            setSelectedJob(job)
+                            setJobUpdate({
+                              status: job.status,
+                              progress: job.progress,
+                              latestUpdate: job.latest_update
+                            })
+                            setUpdateDialogOpen(true)
+                          }}
+                        >
+                          Update
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => {
+                            setSelectedJob(job)
+                            setPaymentDialogOpen(true)
+                          }}
+                        >
+                          <IndianRupee className="h-4 w-4 mr-2" />
+                          Payment
+                        </Button>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-2 text-sm">
+                        <p className="font-medium">Amount: ₹{job.amount.toLocaleString()}</p>
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          job.payment_status === 'Paid' 
+                            ? 'bg-green-100 text-green-800'
+                            : job.payment_status === 'Waiting for Confirmation'
+                            ? 'bg-blue-100 text-blue-800'
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {job.payment_status || 'Pending'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop View */}
+                <div className="hidden sm:block overflow-x-auto">
                 <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
@@ -1981,6 +2340,8 @@ export default function AdminDashboard() {
                           <span className={`px-2 py-1 rounded-full text-xs ${
                             job.payment_status === 'Paid' 
                               ? 'bg-green-100 text-green-800'
+                              : job.payment_status === 'Waiting for Confirmation'
+                              ? 'bg-blue-100 text-blue-800'
                               : 'bg-yellow-100 text-yellow-800'
                           }`}>
                             {job.payment_status || 'Pending'}
@@ -2028,33 +2389,146 @@ export default function AdminDashboard() {
                     ))}
                   </TableBody>
                 </Table>
+                  </div>
+                </div>
+
+                {filteredJobs.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    No jobs found
+                  </div>
+                )}
+
+                <div className="mt-6 flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowCompletedJobs(!showCompletedJobs)}
+                    className="w-full sm:w-auto max-w-[200px]"
+                  >
+                    {showCompletedJobs ? 'Hide Completed Jobs' : 'Show Completed Jobs'}
+                  </Button>
                 </div>
               </CardContent>
             </Card>
           </TabsContent>
           <TabsContent value="documents">
             <Card>
-              <CardHeader className="p-4 sm:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center space-y-4 sm:space-y-0">
+              <CardHeader className="p-4">
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
                   <CardTitle>Documents</CardTitle>
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 w-full sm:w-auto">
-                    <Input
-                      placeholder="Search by document name, client name or email..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-full sm:w-[280px]"
-                    />
                     <Button 
                       onClick={() => setShowRequestDialog(true)}
-                      className="w-full sm:w-auto"
+                      className="hidden sm:flex items-center gap-2"
                     >
-                      <Plus className="mr-2 h-4 w-4" />
+                      <Plus className="h-4 w-4" />
+                      Request Document
+                    </Button>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-4 items-stretch sm:items-center">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-500" />
+                    <Input
+                        placeholder="Search documents..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-8 w-full"
+                    />
+                    </div>
+                    <Button 
+                      onClick={() => setShowRequestDialog(true)}
+                      className="sm:hidden w-full flex items-center justify-center gap-2"
+                    >
+                      <Plus className="h-4 w-4" />
                       Request Document
                     </Button>
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-4 sm:p-6 overflow-x-auto">
+              <CardContent className="p-4">
+                {/* Mobile/Tablet View */}
+                <div className="sm:hidden space-y-4">
+                  {filteredDocuments.map((doc) => (
+                    <div key={doc.id} className="border rounded-lg p-4 space-y-3">
+                      <div className="flex items-start justify-between">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-gray-500" />
+                            <p className="font-medium">{doc.name}</p>
+                          </div>
+                          <p className="text-sm text-gray-500">{doc.client?.full_name}</p>
+                          <p className="text-xs text-gray-400">{formatTimeAgo(doc.uploadedAt)}</p>
+                        </div>
+                        <span className={`px-2 py-1 text-xs rounded-full ${
+                          doc.status === 'Verified' ? 'bg-green-100 text-green-800' :
+                          doc.status === 'Rejected' ? 'bg-red-100 text-red-800' :
+                          doc.status === 'Uploaded' ? 'bg-blue-100 text-blue-800' :
+                          'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {doc.status}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 pt-2 border-t">
+                        {doc.status === 'Uploaded' && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 text-green-600 hover:text-green-700"
+                              onClick={() => handleButtonClick('approve', () => handleDocumentAction(doc, 'approve'))}
+                            >
+                              {buttonStates['approve'] ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                'Approve'
+                              )}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="flex-1 text-red-600 hover:text-red-700"
+                              onClick={() => handleButtonClick('reject', () => handleDocumentAction(doc, 'reject'))}
+                            >
+                              {buttonStates['reject'] ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                'Reject'
+                              )}
+                            </Button>
+                          </>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => handlePreviewDocument(doc)}
+                          disabled={documentLoadingStates[doc.id.toString()]?.action === 'preview'}
+                        >
+                          {documentLoadingStates[doc.id.toString()]?.action === 'preview' ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            'Preview'
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="flex-1"
+                          onClick={() => handleDownloadDocument(doc)}
+                          disabled={documentLoadingStates[doc.id.toString()]?.action === 'download'}
+                        >
+                          {documentLoadingStates[doc.id.toString()]?.action === 'download' ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            'Download'
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Desktop View */}
+                <div className="hidden sm:block overflow-x-auto">
                 <div className="min-w-[640px]">
                 <Table>
                   <TableHeader>
@@ -2172,6 +2646,13 @@ export default function AdminDashboard() {
                   </TableBody>
                 </Table>
                 </div>
+                </div>
+
+                {filteredDocuments.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    No documents found
+                  </div>
+                )}
               </CardContent>
             </Card>
 

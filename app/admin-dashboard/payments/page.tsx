@@ -196,7 +196,7 @@ export default function PaymentConfirmation() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      <Navbar userType="admin" userName={user?.full_name} />
+      <Navbar userType="admin" userName={user?.full_name} orgName={undefined} />
       <main className="flex-grow container mx-auto px-4 py-8">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between">

@@ -18,6 +18,14 @@ type UserData = {
   email: string
   full_name: string
   mobile: string
+  address_line1: string
+  address_line2: string
+  city: string
+  state: string
+  pincode: string
+  company_name: string
+  gst_number: string
+  pan_number: string
 }
 
 export default function AddUser() {
@@ -27,6 +35,14 @@ export default function AddUser() {
     email: "",
     full_name: "",
     mobile: "",
+    address_line1: "",
+    address_line2: "",
+    city: "",
+    state: "",
+    pincode: "",
+    company_name: "",
+    gst_number: "",
+    pan_number: ""
   })
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -50,11 +66,6 @@ export default function AddUser() {
       const result = await createNewUser({
         ...userData,
         password: userData.email, // Use email as password
-        address_line1: "",
-        address_line2: "",
-        city: "",
-        state: "",
-        pincode: ""
       })
 
       if (!result?.success) {
@@ -113,6 +124,109 @@ export default function AddUser() {
                       onChange={(e) => setUserData(prev => ({ ...prev, mobile: e.target.value }))}
                       required
                     />
+                  </div>
+                </div>
+              </div>
+
+              {/* Address Fields */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Address Information (Optional)</h3>
+                <div className="space-y-4 border rounded-lg p-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="address_line1">Address Line 1</Label>
+                    <Input
+                      id="address_line1"
+                      value={userData.address_line1}
+                      onChange={(e) => setUserData(prev => ({ ...prev, address_line1: e.target.value }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="address_line2">Address Line 2</Label>
+                    <Input
+                      id="address_line2"
+                      value={userData.address_line2}
+                      onChange={(e) => setUserData(prev => ({ ...prev, address_line2: e.target.value }))}
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="city">City</Label>
+                      <Input
+                        id="city"
+                        value={userData.city}
+                        onChange={(e) => setUserData(prev => ({ ...prev, city: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="state">State</Label>
+                      <Input
+                        id="state"
+                        value={userData.state}
+                        onChange={(e) => setUserData(prev => ({ ...prev, state: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pincode">Pincode</Label>
+                      <Input
+                        id="pincode"
+                        value={userData.pincode}
+                        onChange={(e) => setUserData(prev => ({ ...prev, pincode: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Business Information */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Business Information (Optional)</h3>
+                <div className="space-y-4 border rounded-lg p-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="company_name">Company Name</Label>
+                    <Input
+                      id="company_name"
+                      value={userData.company_name}
+                      onChange={(e) => setUserData(prev => ({ ...prev, company_name: e.target.value }))}
+                      placeholder="Enter company name"
+                    />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="gst_number">GST Number</Label>
+                      <Input
+                        id="gst_number"
+                        value={userData.gst_number}
+                        onChange={(e) => setUserData(prev => ({ ...prev, gst_number: e.target.value }))}
+                        placeholder="Enter GST number"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pan_number">PAN Number</Label>
+                      <Input
+                        id="pan_number"
+                        value={userData.pan_number}
+                        onChange={(e) => setUserData(prev => ({ ...prev, pan_number: e.target.value }))}
+                        placeholder="Enter PAN number"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Password Field (Email) */}
+              <div className="space-y-4">
+                <h3 className="text-lg font-semibold">Account Information</h3>
+                <div className="relative">
+                  <Label htmlFor="password">Password</Label>
+                  <Input 
+                    id="password"
+                    type="text" 
+                    value={userData.email}
+                    disabled
+                    className="bg-gray-50"
+                  />
+                  <div className="absolute right-3 top-9 text-xs text-gray-500">
+                    Password will be same as email
                   </div>
                 </div>
               </div>

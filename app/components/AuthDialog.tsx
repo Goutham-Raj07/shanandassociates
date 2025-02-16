@@ -118,88 +118,111 @@ export function AuthDialog({ open, onOpenChangeAction, initialMode = 'signin' }:
     })
   }
 
+  const handleModeChange = (newMode: 'signin' | 'signup') => {
+    setMode(newMode)
+    resetDialog() // Reset form data when switching modes
+  }
+
   return (
     <Dialog 
       open={open} 
       onOpenChange={(open) => {
         onOpenChangeAction(open)
-        if (!open) resetDialog()
+        if (!open) {
+          resetDialog()
+          setMode('signin') // Reset to signin mode when dialog closes
+        }
       }}
     >
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>
-            {mode === 'signin' ? 'Sign in to your account' : 'Create an account'}
-          </DialogTitle>
-          {mode === 'signup' && (
-            <div className="flex justify-center space-x-2 pt-2">
-              <div className={`h-2 w-16 rounded ${step >= 1 ? 'bg-blue-600' : 'bg-gray-200'}`} />
-              <div className={`h-2 w-16 rounded ${step >= 2 ? 'bg-blue-600' : 'bg-gray-200'}`} />
-            </div>
-          )}
-        </DialogHeader>
-
+      <DialogContent className="p-0 border-none bg-transparent shadow-none">
         {mode === 'signin' ? (
-          <form onSubmit={handleSignIn} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={formData.email}
-                onChange={handleInputChange}
-                required
-              />
+          <div className="bg-white rounded-xl overflow-hidden">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-8 py-6 text-white">
+              <h1 className="text-2xl font-semibold text-center">Welcome back</h1>
+              <p className="text-blue-100 text-center mt-2">Sign in to your account</p>
             </div>
 
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <Label htmlFor="password">Password</Label>
-                <Button 
-                  variant="link" 
-                  className="p-0 text-sm"
-                  onClick={() => {/* Add forgot password logic */}}
-                >
-                  Forgot password?
-                </Button>
+            {/* Form */}
+            <form onSubmit={handleSignIn} className="p-8 space-y-6">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email" className="text-gray-700">Email address</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={formData.email}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="Enter your email"
+                    className="h-11"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label htmlFor="password" className="text-gray-700">Password</Label>
+                    <Button 
+                      variant="link" 
+                      className="p-0 text-sm text-blue-600 hover:text-blue-700"
+                      onClick={() => {/* Add forgot password logic */}}
+                    >
+                      Forgot password?
+                    </Button>
+                  </div>
+                  <Input
+                    id="password"
+                    type="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    required
+                    placeholder="Enter your password"
+                    className="h-11"
+                  />
+                </div>
               </div>
-              <Input
-                id="password"
-                type="password"
-                value={formData.password}
-                onChange={handleInputChange}
-                required
-              />
-            </div>
 
-            <Button 
-              type="submit" 
-              className="w-full"
-              disabled={isLoading || !isHydrated}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Signing in...
-                </>
-              ) : (
-                "Sign in"
-              )}
-            </Button>
-
-            <div className="text-center text-sm">
-              <span className="text-gray-500">Don't have an account?</span>{" "}
               <Button 
-                variant="link" 
-                className="p-0" 
-                onClick={() => setMode('signup')}
+                type="submit" 
+                className="w-full h-11 bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={isLoading || !isHydrated}
               >
-                Sign up
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Signing in...
+                  </>
+                ) : (
+                  "Sign in"
+                )}
               </Button>
-            </div>
-          </form>
+
+              <div className="relative">
+                <div className="absolute inset-0 flex items-center">
+                  <span className="w-full border-t border-gray-200" />
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="bg-white px-2 text-gray-500">
+                    Don't have an account?
+                  </span>
+                </div>
+              </div>
+
+              <Button 
+                type="button"
+                variant="outline"
+                className="w-full h-11 border-blue-600 text-blue-600 hover:bg-blue-50"
+                onClick={() => handleModeChange('signup')}
+              >
+                Create an account
+              </Button>
+            </form>
+          </div>
         ) : (
-          <SignupWizard onSuccessAction={() => setMode('signin')} />
+          <SignupWizard 
+            onSuccessAction={() => handleModeChange('signin')}
+            onBackToSignInAction={() => handleModeChange('signin')}
+          />
         )}
       </DialogContent>
     </Dialog>

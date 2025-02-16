@@ -8,19 +8,21 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
-import { ChevronDown, LogOut, User, Settings, Loader2, IndianRupee } from "lucide-react"
+import { ChevronDown, LogOut, User, Settings, Loader2, IndianRupee, Building2 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { AuthDialog } from "./AuthDialog"
 import { useAuth } from "@/contexts/AuthContext"
+import Image from 'next/image'
 
 interface NavbarProps {
-  userType: 'client' | 'admin' | 'guest'
+  userType: 'guest' | 'client' | 'admin'
   userName?: string
-  orgName?: string
+  orgName: React.ReactNode
 }
 
-export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' }: NavbarProps) {
+export function Navbar({ userType, userName = '', orgName }: NavbarProps) {
   const [isOpen, setIsOpen] = useState(false)
   const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [showAuthDialog, setShowAuthDialog] = useState(false)
@@ -70,11 +72,19 @@ export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' 
         <div className="flex items-center justify-between h-16">
           {/* Logo and Org Name */}
           <div className="flex items-center space-x-4">
-            <Link href="/" className="flex items-center space-x-2">
-              <div className="h-8 w-8 rounded-full bg-blue-600 flex items-center justify-center">
-                <span className="text-white font-bold">S</span>
-              </div>
-              <span className="font-semibold text-lg">{orgName}</span>
+            <Link href="/" className="flex items-center space-x-3">
+              {(userType === 'admin' || userType === 'client') && (
+                <Image
+                  src="https://images.seeklogo.com/logo-png/13/1/the-institute-of-chartered-accountants-of-india-logo-png_seeklogo-138618.png"
+                  alt="CA Logo"
+                  width={40}
+                  height={40}
+                  className="object-contain"
+                  priority
+                  unoptimized
+                />
+              )}
+              {orgName}
             </Link>
           </div>
 
@@ -130,12 +140,20 @@ export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' 
                     </Link>
                   </DropdownMenuItem>
                   {userType === 'admin' && (
-                    <DropdownMenuItem>
-                      <Link href="/admin-dashboard/payments" className="flex items-center w-full">
-                        <IndianRupee className="mr-2 h-4 w-4" />
-                        Payment Requests
-                      </Link>
-                    </DropdownMenuItem>
+                    <>
+                      <DropdownMenuItem>
+                        <Link href="/admin-dashboard/payments" className="flex items-center w-full">
+                          <IndianRupee className="mr-2 h-4 w-4" />
+                          Payment Requests
+                        </Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem>
+                        <Link href="/admin-dashboard/business-details" className="flex items-center w-full">
+                          <Building2 className="mr-2 h-4 w-4" />
+                          Business Details
+                        </Link>
+                      </DropdownMenuItem>
+                    </>
                   )}
                   <DropdownMenuItem>
                     <Link href="/profile" className="flex items-center w-full">
@@ -177,7 +195,7 @@ export function Navbar({ userType, userName = '', orgName = 'Shan & Associates' 
                   }
                 }}
               >
-                Register
+                Sign Up
               </Button>
             </div>
           )}

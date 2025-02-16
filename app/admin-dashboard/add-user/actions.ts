@@ -1,7 +1,9 @@
 'use server'
 
 import { createClient } from '@supabase/supabase-js'
+import { supabase } from "@/lib/supabase"
 
+// Create admin supabase client
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -13,7 +15,7 @@ const supabaseAdmin = createClient(
   }
 )
 
-export async function createNewUser(userData: {
+type NewUserData = {
   email: string
   password: string
   full_name: string
@@ -23,9 +25,14 @@ export async function createNewUser(userData: {
   city: string
   state: string
   pincode: string
-}) {
+  company_name: string
+  gst_number: string
+  pan_number: string
+}
+
+export async function createNewUser(userData: NewUserData) {
   try {
-    // Create auth user
+    // Create auth user with admin client
     const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
       email: userData.email,
       password: userData.password,
@@ -39,7 +46,7 @@ export async function createNewUser(userData: {
     if (authError) throw authError
 
     if (authData.user) {
-      // Create profile
+      // Create profile with all fields
       const { error: profileError } = await supabaseAdmin
         .from('users')
         .upsert([
@@ -53,7 +60,10 @@ export async function createNewUser(userData: {
             address_line2: userData.address_line2,
             city: userData.city,
             state: userData.state,
-            pincode: userData.pincode
+            pincode: userData.pincode,
+            company_name: userData.company_name,
+            gst_number: userData.gst_number,
+            pan_number: userData.pan_number
           }
         ], {
           onConflict: 'id',
@@ -64,6 +74,8 @@ export async function createNewUser(userData: {
 
       return { success: true }
     }
+
+    throw new Error('Failed to create user')
   } catch (error: any) {
     console.error('Error creating user:', error)
     return { 
