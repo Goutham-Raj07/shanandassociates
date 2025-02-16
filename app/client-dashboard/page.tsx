@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Progress } from "@/components/ui/progress"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send, X } from "lucide-react"
+import { Upload, FileText, IndianRupee, MessageSquare, RefreshCw, Plus, Send, X, Briefcase } from "lucide-react"
 import { PaymentDialog } from "../components/PaymentDialog"
 import { JobRequestDialog, JobRequest } from "../components/JobRequestDialog"
 import { generateInvoicePDF } from "../components/Invoice"
@@ -1191,8 +1191,36 @@ export default function ClientDashboard() {
         </Card>
 
         <Tabs defaultValue="jobs" className="space-y-4">
-          <TabsList className="w-full border-b overflow-x-auto flex-nowrap">
-            <div className="container mx-auto flex justify-start gap-4 min-w-max px-4">
+          <TabsList className="w-full border-b">
+            {/* Mobile/Tablet View */}
+            <div className="sm:hidden w-full px-4 py-2">
+              <div className="grid grid-cols-3 gap-2 bg-gray-100 p-1 rounded-lg">
+                <TabsTrigger 
+                  value="jobs"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+                >
+                  <Briefcase className="h-4 w-4" />
+                  <span>Jobs</span>
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="payments"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+                >
+                  <IndianRupee className="h-4 w-4" />
+                  <span>Payments</span>
+                </TabsTrigger>
+                <TabsTrigger 
+                  value="documents"
+                  className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md data-[state=active]:bg-white data-[state=active]:shadow-sm"
+                >
+                  <FileText className="h-4 w-4" />
+                  <span>Docs</span>
+                </TabsTrigger>
+              </div>
+            </div>
+
+            {/* Desktop View - Keep existing */}
+            <div className="hidden sm:block container mx-auto flex justify-start gap-4 min-w-max px-4">
               <TabsTrigger 
                 value="jobs"
                 className="px-4 sm:px-6 py-2 sm:py-3 text-sm sm:text-base font-medium"
@@ -1332,106 +1360,196 @@ export default function ClientDashboard() {
           </TabsContent>
 
           <TabsContent value="payments" className="py-4">
-            <Card className="shadow-md overflow-x-auto">
+            <Card className="shadow-md">
               <CardContent className="p-4 sm:p-6">
-                <div className="min-w-[640px]">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Date</TableHead>
-                        <TableHead>Description</TableHead>
-                        <TableHead>Amount</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Action</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {processPayments(payments)
-                        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-                        .map((payment) => (
-                          <TableRow key={payment.id}>
-                            <TableCell>
+                {/* Mobile/Tablet View */}
+                <div className="sm:hidden space-y-4">
+                  {processPayments(payments)
+                    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                    .map((payment) => (
+                      <div key={payment.id} className="border rounded-lg p-4 space-y-3">
+                        <div className="flex justify-between items-start">
+                          <div className="space-y-1">
+                            <p className="font-medium">₹{payment.amount.toLocaleString()}</p>
+                            <p className="text-sm text-gray-600">{payment.description}</p>
+                            <p className="text-xs text-gray-500">
                               {formatPaymentDate(payment.date || payment.created_at)}
-                            </TableCell>
-                            <TableCell>{payment.description}</TableCell>
-                            <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
-                            <TableCell>
-                              <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
-                                payment.status === 'Paid' 
-                                  ? 'bg-green-100 text-green-800 border border-green-200'
-                                  : payment.status === 'Waiting for Confirmation'
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-200'
-                                  : payment.status === 'Rejected'
-                                  ? 'bg-red-100 text-red-800 border border-red-200'
-                                  : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                              }`}>
-                                {payment.status}
-                              </span>
-                              {payment.status === 'Paid' && payment.paymentMethod && (
-                                <div className="text-sm text-gray-500 mt-1">
-                                  via {payment.paymentMethod}
-                                  {payment.paidAt && (
-                                    <span className="block">
-                                      on {formatSimpleDate(payment.paidAt)}
+                            </p>
+                          </div>
+                          <span className={`px-3 py-1.5 text-sm font-medium rounded-full ${
+                            payment.status === 'Paid' 
+                              ? 'bg-green-100 text-green-800 border border-green-200'
+                              : payment.status === 'Waiting for Confirmation'
+                              ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                              : payment.status === 'Rejected'
+                              ? 'bg-red-100 text-red-800 border border-red-200'
+                              : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                          }`}>
+                            {payment.status}
+                          </span>
+                        </div>
+
+                        {payment.status === 'Paid' && payment.paymentMethod && (
+                          <div className="text-sm text-gray-500 pt-2 border-t">
+                            <p>Paid via {payment.paymentMethod}</p>
+                            {payment.paidAt && (
+                              <p>on {formatSimpleDate(payment.paidAt)}</p>
+                            )}
+                          </div>
+                        )}
+
+                        {payment.rejection_reason && payment.status === 'Pending' && (
+                          <div className="text-sm text-red-600 pt-2 border-t">
+                            <p>Payment was rejected</p>
+                            <p className="mt-1">
+                              <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                            </p>
+                          </div>
+                        )}
+
+                        <div className="flex gap-2 pt-3 border-t">
+                          {(payment.status === 'Pending') && (
+                            <Button
+                              className="flex-1"
+                              onClick={() => handlePayment(payment.id)}
+                            >
+                              {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
+                            </Button>
+                          )}
+                          {payment.status === 'Paid' && (
+                            <Button
+                              className="flex-1"
+                              variant="outline"
+                              onClick={() => handleViewInvoice(payment)}
+                            >
+                              <FileText className="h-4 w-4 mr-2" />
+                              View Invoice
+                            </Button>
+                          )}
+                          {payment.status === 'Waiting for Confirmation' && (
+                            <div className="flex-1 flex items-center justify-center text-yellow-600 py-2">
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                              Awaiting Confirmation
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+
+                  {processPayments(payments).filter(p => p.status === 'Pending').length > 0 && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mt-4">
+                      <div className="text-lg font-medium text-yellow-800">Total Pending Amount</div>
+                      <div className="text-2xl font-bold text-yellow-900 mt-1">
+                        ₹{processPayments(payments)
+                          .filter(p => p.status === 'Pending')
+                          .reduce((sum, p) => sum + p.amount, 0)
+                          .toLocaleString()}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Desktop View - Keep the existing table view */}
+                <div className="hidden sm:block overflow-x-auto">
+                  <div className="min-w-[640px]">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Description</TableHead>
+                          <TableHead>Amount</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead>Action</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {processPayments(payments)
+                          .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+                          .map((payment) => (
+                            <TableRow key={payment.id}>
+                              <TableCell>
+                                {formatPaymentDate(payment.date || payment.created_at)}
+                              </TableCell>
+                              <TableCell>{payment.description}</TableCell>
+                              <TableCell>₹{payment.amount.toLocaleString()}</TableCell>
+                              <TableCell>
+                                <span className={`inline-block px-3 py-1.5 text-base font-medium rounded-full ${
+                                  payment.status === 'Paid' 
+                                    ? 'bg-green-100 text-green-800 border border-green-200'
+                                    : payment.status === 'Waiting for Confirmation'
+                                    ? 'bg-blue-100 text-blue-800 border border-blue-200'
+                                    : payment.status === 'Rejected'
+                                    ? 'bg-red-100 text-red-800 border border-red-200'
+                                    : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                }`}>
+                                  {payment.status}
+                                </span>
+                                {payment.status === 'Paid' && payment.paymentMethod && (
+                                  <div className="text-sm text-gray-500 mt-1">
+                                    via {payment.paymentMethod}
+                                    {payment.paidAt && (
+                                      <span className="block">
+                                        on {formatSimpleDate(payment.paidAt)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex items-center gap-2">
+                                  {(payment.status === 'Pending') && (
+                                    <Button
+                                      size="sm"
+                                      onClick={() => handlePayment(payment.id)}
+                                    >
+                                      {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
+                                    </Button>
+                                  )}
+                                  {payment.status === 'Paid' && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => handleViewInvoice(payment)}
+                                    >
+                                      <FileText className="h-4 w-4 mr-2" />
+                                      Invoice
+                                    </Button>
+                                  )}
+                                  {payment.status === 'Waiting for Confirmation' && (
+                                    <span className="text-yellow-600 flex items-center">
+                                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                      Awaiting Confirmation
                                     </span>
                                   )}
                                 </div>
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center gap-2">
-                                {(payment.status === 'Pending') && (
-                                  <Button
-                                    size="sm"
-                                    onClick={() => handlePayment(payment.id)}
-                                  >
-                                    {payment.rejection_reason ? 'Rejected - Pay Again' : 'Pay Now'}
-                                  </Button>
-                                )}
-                                {payment.status === 'Paid' && (
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => handleViewInvoice(payment)}
-                                  >
-                                    <FileText className="h-4 w-4 mr-2" />
-                                    Invoice
-                                  </Button>
-                                )}
-                                {payment.status === 'Waiting for Confirmation' && (
-                                  <span className="text-yellow-600 flex items-center">
-                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                                    Awaiting Confirmation
-                                  </span>
-                                )}
-                              </div>
-                              {payment.rejection_reason && payment.status === 'Pending' && (
-                                <div className="text-sm text-red-600 mt-1">
-                                  <div>Payment was rejected.</div>
-                                  <div className="mt-1">
-                                    <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                                {payment.rejection_reason && payment.status === 'Pending' && (
+                                  <div className="text-sm text-red-600 mt-1">
+                                    <div>Payment was rejected.</div>
+                                    <div className="mt-1">
+                                      <span className="font-medium">Reason:</span> {payment.rejection_reason}
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        {processPayments(payments).filter(p => p.status === 'Pending').length > 0 && (
+                          <TableRow>
+                            <TableCell colSpan={2} className="text-right font-medium text-lg">
+                              Total Pending Amount:
                             </TableCell>
+                            <TableCell className="font-bold text-xl text-yellow-600">
+                              ₹{processPayments(payments)
+                                .filter(p => p.status === 'Pending')
+                                .reduce((sum, p) => sum + p.amount, 0)
+                                .toLocaleString()}
+                            </TableCell>
+                            <TableCell colSpan={2}></TableCell>
                           </TableRow>
-                        ))}
-                      {processPayments(payments).filter(p => p.status === 'Pending').length > 0 && (
-                        <TableRow>
-                          <TableCell colSpan={2} className="text-right font-medium text-lg">
-                            Total Pending Amount:
-                          </TableCell>
-                          <TableCell className="font-bold text-xl text-yellow-600">
-                            ₹{processPayments(payments)
-                              .filter(p => p.status === 'Pending')
-                              .reduce((sum, p) => sum + p.amount, 0)
-                              .toLocaleString()}
-                          </TableCell>
-                          <TableCell colSpan={2}></TableCell>
-                        </TableRow>
-                      )}
-                    </TableBody>
-                  </Table>
+                        )}
+                      </TableBody>
+                    </Table>
+                  </div>
                 </div>
               </CardContent>
             </Card>
