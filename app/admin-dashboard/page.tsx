@@ -1756,23 +1756,77 @@ export default function AdminDashboard() {
                 {/* Mobile/Tablet View */}
                 <div className="sm:hidden space-y-4">
                   {filteredClients.map((client) => (
-                    <div key={client.id} className="relative flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center space-x-4">
-                        <div>
-                          <p className="font-medium flex items-center gap-2">
-                            {client.full_name}
+                    <div key={client.id} className="bg-white border rounded-lg shadow-sm p-4 space-y-3">
+                      <div className="flex justify-between items-start">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-medium">{client.full_name || 'Unnamed Client'}</h3>
                             {isNewClient(client.created_at) && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
+                              <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-800">
                                 NEW
                               </span>
                             )}
+                          </div>
+                          <p className="text-sm text-gray-500">{client.email || 'No email'}</p>
+                          <p className="text-sm text-gray-500">{client.mobile || 'No mobile'}</p>
+                        </div>
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                          client.status === 'Active' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {client.status}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4 pt-3 border-t">
+                        <div>
+                          <p className="text-xs text-gray-500">Total Jobs</p>
+                          <p className="font-medium">{client.total_jobs || 0}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-500">Pending Payments</p>
+                          <p className={`font-medium ${client.pending_payments > 0 ? 'text-yellow-600' : 'text-gray-600'}`}>
+                            ₹{(client.pending_payments || 0).toLocaleString()}
                           </p>
-                          <p className="text-sm text-gray-500">{client.email}</p>
                         </div>
                       </div>
-                      {/* ... rest of your client card content ... */}
+
+                      <div className="flex items-center justify-between pt-3 border-t">
+                        <div className="text-sm text-gray-500">
+                          Joined: {new Date(client.created_at).toLocaleDateString()}
+                        </div>
+                        {client.address_line1 && (
+                          <Dialog>
+                            <DialogTrigger>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MapPin className="h-4 w-4 text-gray-500" />
+                              </Button>
+                            </DialogTrigger>
+                            <DialogContent className="sm:max-w-[425px]">
+                              <div className="space-y-2 pt-2">
+                                <p>{client.address_line1}</p>
+                                {client.address_line2 && <p>{client.address_line2}</p>}
+                                {(client.city || client.state || client.pincode) && (
+                                  <p>
+                                    {[client.city, client.state, client.pincode]
+                                      .filter(Boolean)
+                                      .join(', ')}
+                                  </p>
+                                )}
+                              </div>
+                            </DialogContent>
+                          </Dialog>
+                        )}
+                      </div>
                     </div>
                   ))}
+                  
+                  {filteredClients.length === 0 && (
+                    <div className="text-center py-8 text-gray-500">
+                      No clients found
+                    </div>
+                  )}
                 </div>
 
                 {/* Desktop View */}
