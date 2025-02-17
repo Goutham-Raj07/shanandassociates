@@ -556,7 +556,7 @@ export default function AdminDashboard() {
     }
   }
 
-  // Update the loadAdminData function to properly handle payment status
+  // Update the loadAdminData function to include job requests loading
   const loadAdminData = async () => {
     try {
       setIsLoading(true)
@@ -606,7 +606,7 @@ export default function AdminDashboard() {
           `)
           .order('created_at', { ascending: false }),
 
-        // Add this block to load job requests
+        // Load job requests
         supabase
           .from('job_requests')
           .select(`
@@ -689,9 +689,9 @@ export default function AdminDashboard() {
         client: doc.client
       })) || [])
       
-      // Add this block to process and set job requests
+      // Process and set job requests
       if (jobRequestsData) {
-        const processedRequests = jobRequestsData.map(request => ({
+        const processedJobRequests = jobRequestsData.map(request => ({
           id: request.id,
           client: request.client,
           service_type: request.service_type,
@@ -704,7 +704,7 @@ export default function AdminDashboard() {
           clientName: request.client?.full_name || 'Unknown Client',
           createdAt: request.created_at
         }))
-        setJobRequests(processedRequests)
+        setJobRequests(processedJobRequests)
       }
       
     } catch (error) {
@@ -945,49 +945,26 @@ export default function AdminDashboard() {
 
   const handleJobRequestAction = async (requestId: number, action: 'approve' | 'reject') => {
     try {
-      // First update the job request status
-      const { error: updateError } = await supabase
-        .from('job_requests')
-        .update({
-          status: action === 'approve' ? 'Approved' : 'Rejected'
-        })
-        .eq('id', requestId)
-
-      if (updateError) throw updateError
+      const updatedRequest = await jobRequestsApi.updateJobRequest(requestId, {
+        status: action === 'approve' ? 'Approved' : 'Rejected'
+      })
 
       if (action === 'approve') {
-        // Get the job request details to create a new job
-        const { data: requestData, error: requestError } = await supabase
-          .from('job_requests')
-          .select('*')
-          .eq('id', requestId)
-          .single()
-
-        if (requestError) throw requestError
-
         // Create a new job when approved
-        const { error: jobError } = await supabase
-          .from('jobs')
-          .insert({
-            client_id: requestData.client_id,
-            title: requestData.title || requestData.service_type,
-            type: requestData.type,
-            status: "In Progress",
-            deadline: requestData.deadline,
-            progress: 0,
-            latest_update: "Job created from request",
-            amount: parseInt(requestData.budget || "0")
-          })
-
-        if (jobError) throw jobError
+        await jobsApi.createJob({
+          client_id: updatedRequest.client_id,
+          title: updatedRequest.title,
+          type: updatedRequest.type,
+          status: "In Progress",
+          deadline: updatedRequest.deadline,
+          progress: 0,
+          latest_update: "Job created from request",
+          amount: parseInt(updatedRequest.budget || "0")
+        })
       }
-
-      // Refresh the data
-      await loadAdminData()
 
       toast.success(`Job request ${action === 'approve' ? 'approved' : 'rejected'} successfully`)
     } catch (error: any) {
-      console.error(`Failed to ${action} job request:`, error)
       toast.error(`Failed to ${action} job request`, {
         description: error.message
       })
@@ -1496,24 +1473,6 @@ export default function AdminDashboard() {
       toast.error('Failed to approve payment')
     }
   }
-
-  // Add this near other filter functions
-  const filteredJobRequests = useMemo(() => {
-    return jobRequests.filter(request => {
-      const searchTerm = jobRequestSearch.toLowerCase().trim()
-      if (!searchTerm) return true
-
-      const title = (request.title || '').toLowerCase()
-      const type = (request.type || '').toLowerCase()
-      const clientName = (request.client?.full_name || '').toLowerCase()
-      const description = (request.description || '').toLowerCase()
-      
-      return title.includes(searchTerm) ||
-             type.includes(searchTerm) ||
-             clientName.includes(searchTerm) ||
-             description.includes(searchTerm)
-    })
-  }, [jobRequests, jobRequestSearch])
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -2808,7 +2767,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {filteredJobRequests.map((request) => (
+                  {jobRequests.map((request) => (
                     <div key={request.id} className="border rounded-lg p-4">
                       <div className="flex justify-between items-start">
                         <div className="space-y-2">
@@ -2877,9 +2836,9 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   ))}
-                  {filteredJobRequests.length === 0 && (
+                  {jobRequests.length === 0 && (
                     <div className="text-center py-8 text-gray-500">
-                      {jobRequestSearch ? 'No matching job requests found' : 'No job requests found'}
+                      No job requests found
                     </div>
                   )}
                 </div>
