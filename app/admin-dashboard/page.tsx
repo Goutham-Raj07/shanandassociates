@@ -565,6 +565,7 @@ export default function AdminDashboard() {
         { data: clientsData, error: clientsError },
         { data: jobsData, error: jobsError },
         { data: documentsData, error: documentsError },
+        { data: jobRequestsData, error: jobRequestsError }, // Add this line
       ] = await Promise.all([
         // Load clients
         supabase
@@ -604,9 +605,22 @@ export default function AdminDashboard() {
             )
           `)
           .order('created_at', { ascending: false }),
+
+        // Add this block to load job requests
+        supabase
+          .from('job_requests')
+          .select(`
+            *,
+            client:client_id (
+              id,
+              full_name,
+              email
+            )
+          `)
+          .order('created_at', { ascending: false }),
       ])
 
-      if (clientsError || jobsError || documentsError) 
+      if (clientsError || jobsError || documentsError || jobRequestsError) 
         throw new Error('Error fetching data')
 
       // Process jobs to include payment status based on latest payment
@@ -674,6 +688,24 @@ export default function AdminDashboard() {
         file_name: doc.file_name,
         client: doc.client
       })) || [])
+      
+      // Add this block to process and set job requests
+      if (jobRequestsData) {
+        const processedRequests = jobRequestsData.map(request => ({
+          id: request.id,
+          client: request.client,
+          service_type: request.service_type,
+          title: request.title,
+          type: request.type,
+          description: request.description,
+          deadline: request.deadline,
+          budget: request.budget,
+          status: request.status,
+          clientName: request.client?.full_name || 'Unknown Client',
+          createdAt: request.created_at
+        }))
+        setJobRequests(processedRequests)
+      }
       
     } catch (error) {
       console.error('Error loading admin data:', error)
@@ -913,26 +945,49 @@ export default function AdminDashboard() {
 
   const handleJobRequestAction = async (requestId: number, action: 'approve' | 'reject') => {
     try {
-      const updatedRequest = await jobRequestsApi.updateJobRequest(requestId, {
-        status: action === 'approve' ? 'Approved' : 'Rejected'
-      })
+      // First update the job request status
+      const { error: updateError } = await supabase
+        .from('job_requests')
+        .update({
+          status: action === 'approve' ? 'Approved' : 'Rejected'
+        })
+        .eq('id', requestId)
+
+      if (updateError) throw updateError
 
       if (action === 'approve') {
+        // Get the job request details to create a new job
+        const { data: requestData, error: requestError } = await supabase
+          .from('job_requests')
+          .select('*')
+          .eq('id', requestId)
+          .single()
+
+        if (requestError) throw requestError
+
         // Create a new job when approved
-        await jobsApi.createJob({
-          client_id: updatedRequest.client_id,
-          title: updatedRequest.title,
-          type: updatedRequest.type,
-          status: "In Progress",
-          deadline: updatedRequest.deadline,
-          progress: 0,
-          latest_update: "Job created from request",
-          amount: parseInt(updatedRequest.budget || "0")
-        })
+        const { error: jobError } = await supabase
+          .from('jobs')
+          .insert({
+            client_id: requestData.client_id,
+            title: requestData.title || requestData.service_type,
+            type: requestData.type,
+            status: "In Progress",
+            deadline: requestData.deadline,
+            progress: 0,
+            latest_update: "Job created from request",
+            amount: parseInt(requestData.budget || "0")
+          })
+
+        if (jobError) throw jobError
       }
+
+      // Refresh the data
+      await loadAdminData()
 
       toast.success(`Job request ${action === 'approve' ? 'approved' : 'rejected'} successfully`)
     } catch (error: any) {
+      console.error(`Failed to ${action} job request:`, error)
       toast.error(`Failed to ${action} job request`, {
         description: error.message
       })
@@ -1441,6 +1496,24 @@ export default function AdminDashboard() {
       toast.error('Failed to approve payment')
     }
   }
+
+  // Add this near other filter functions
+  const filteredJobRequests = useMemo(() => {
+    return jobRequests.filter(request => {
+      const searchTerm = jobRequestSearch.toLowerCase().trim()
+      if (!searchTerm) return true
+
+      const title = (request.title || '').toLowerCase()
+      const type = (request.type || '').toLowerCase()
+      const clientName = (request.client?.full_name || '').toLowerCase()
+      const description = (request.description || '').toLowerCase()
+      
+      return title.includes(searchTerm) ||
+             type.includes(searchTerm) ||
+             clientName.includes(searchTerm) ||
+             description.includes(searchTerm)
+    })
+  }, [jobRequests, jobRequestSearch])
 
   return (
     <div className="flex flex-col min-h-screen">
@@ -2735,7 +2808,7 @@ export default function AdminDashboard() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {jobRequests.map((request) => (
+                  {filteredJobRequests.map((request) => (
                     <div key={request.id} className="border rounded-lg p-4">
                       <div className="flex justify-between items-start">
                         <div className="space-y-2">
@@ -2804,9 +2877,9 @@ export default function AdminDashboard() {
                       </div>
                     </div>
                   ))}
-                  {jobRequests.length === 0 && (
+                  {filteredJobRequests.length === 0 && (
                     <div className="text-center py-8 text-gray-500">
-                      No job requests found
+                      {jobRequestSearch ? 'No matching job requests found' : 'No job requests found'}
                     </div>
                   )}
                 </div>
